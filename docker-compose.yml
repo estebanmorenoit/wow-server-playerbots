@@ -23,12 +23,18 @@ services:
     networks:
       - ac-network
 
+  # One-shot: creates/updates acore_auth, acore_world, acore_characters. Run before
+  # ac-worldserver/ac-authserver; exits when done (see depends_on below).
   ac-db-import:
     container_name: ac-db-import
     image: estebanmorenoit/ac-wotlk-db-import-playerbots:master
     environment:
-      AC_DATABASE_HOST: ac-database
-      AC_DATABASE_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-password}
+      AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
+      AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
+      AC_CHARACTER_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_characters"
+    volumes:
+      - ./env/dist/etc:/azerothcore/env/dist/etc
+      - ./env/dist/logs:/azerothcore/env/dist/logs
     depends_on:
       ac-database:
         condition: service_healthy
@@ -40,8 +46,10 @@ services:
     image: estebanmorenoit/ac-wotlk-authserver-playerbots:master
     restart: unless-stopped
     environment:
-      AC_DATABASE_HOST: ac-database
-      AC_DATABASE_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-password}
+      AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
+    volumes:
+      - ./env/dist/etc:/azerothcore/env/dist/etc
+      - ./env/dist/logs:/azerothcore/env/dist/logs
     depends_on:
       ac-db-import:
         condition: service_completed_successfully
@@ -57,16 +65,26 @@ services:
     stdin_open: true
     tty: true
     environment:
-      AC_DATABASE_HOST: ac-database
-      AC_DATABASE_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-password}
+      AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
+      AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
+      AC_CHARACTER_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_characters"
+      # mod-playerbots creates/manages this database itself on first connect
+      AC_PLAYERBOTS_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_playerbots"
       AC_AI_PLAYERBOT_RANDOM_BOT_AUTOLOGIN: "1"
-      AC_AI_PLAYERBOT_MIN_RANDOM_BOTS: "80"
-      AC_AI_PLAYERBOT_MAX_RANDOM_BOTS: "80"
+      AC_AI_PLAYERBOT_MIN_RANDOM_BOTS: "100"
+      AC_AI_PLAYERBOT_MAX_RANDOM_BOTS: "100"
       AC_AI_PLAYERBOT_SYNC_LEVEL_WITH_PLAYERS: "1"
       AC_AI_PLAYERBOT_RANDOM_BOT_CONCENTRATE_IN_PLAYER_ZONE: "1"
-      AC_AI_PLAYERBOT_ENABLE_GREET: "1"
+      # Greet disabled: mod-llm-chatter replaces built-in bot chat (see below).
+      AC_AI_PLAYERBOT_ENABLE_GREET: "0"
+      # Per-bot AI cost per tick (core default is 10) — tuned down for CPU headroom
+      # on a 4-core host running 100 bots. Raise if you have cores to spare.
+      AC_AI_PLAYERBOT_ITERATIONS_PER_TICK: "6"
     volumes:
       - ac-client-data:/azerothcore/env/dist/data
+      - ./env/dist/etc:/azerothcore/env/dist/etc
+      - ./env/dist/logs:/azerothcore/env/dist/logs
+      - ./modules:/azerothcore/modules:ro
     depends_on:
       ac-db-import:
         condition: service_completed_successfully
@@ -77,6 +95,32 @@ services:
       - "8085:8085"
     networks:
       - ac-network
+
+  # Python bridge for mod-llm-chatter: polls the DB for bot chat requests and calls
+  # out to an LLM provider (Anthropic/OpenAI/Google/OpenRouter/Ollama). Needs a real
+  # API key in env/dist/etc/modules/mod_llm_chatter.conf (copied from the .dist
+  # template — never commit that file with a real key in it).
+  ac-llm-chatter-bridge:
+    container_name: ac-llm-chatter-bridge
+    image: python:3.11-slim
+    networks:
+      - ac-network
+    working_dir: /app
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: >
+      bash -c "
+        pip install --quiet -r /app/requirements.txt &&
+        python llm_chatter_bridge.py --config /config/mod_llm_chatter.conf
+      "
+    volumes:
+      - ./modules/mod-llm-chatter/tools:/app:ro
+      - ./env/dist/etc/modules:/config:ro
+      - ./env/dist/logs:/logs
+    restart: unless-stopped
+    depends_on:
+      ac-database:
+        condition: service_healthy
 
 networks:
   ac-network:
