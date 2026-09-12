@@ -103,7 +103,11 @@ services:
   # installing them on every container start. Needs a real API key in
   # env/dist/etc/modules/mod_llm_chatter.conf (copied from the .dist template —
   # never commit that file with a real key in it, and never bake it into the
-  # image; it stays bind-mounted at runtime).
+  # image; it stays bind-mounted at runtime). Waits on ac-db-import finishing
+  # (not just ac-database being healthy) so it never races the module's table
+  # creation on a fresh install. Gated behind the "llm-chatter" profile so a
+  # bare `docker compose up -d` doesn't start it before it's configured;
+  # deploy.sh adds --profile llm-chatter automatically once you give it a key.
   ac-llm-chatter-bridge:
     container_name: ac-llm-chatter-bridge
     build:
@@ -122,9 +126,12 @@ services:
       - ./env/dist/etc/modules:/config:ro
       - ./env/dist/logs:/logs
     restart: unless-stopped
+    profiles: ["llm-chatter"]
     depends_on:
       ac-database:
         condition: service_healthy
+      ac-db-import:
+        condition: service_completed_successfully
 
 networks:
   ac-network:

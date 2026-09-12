@@ -27,32 +27,26 @@ The C++ side (core + all three modules) is baked into these images — no build 
 
 All four are built from the same `apps/docker/Dockerfile` in the AzerothCore playerbots fork, using a different `target` per service.
 
-**Exception**: mod-llm-chatter's Python bridge (`ac-llm-chatter-bridge` below) isn't one of the four prebuilt Hub images above, since it's a separate Python process from the C++ world server. Its build pulls source straight from `Hokken/mod-llm-chatter` on GitHub via a git build context — no local clone needed for this piece. (You'll likely still have `modules/mod-llm-chatter` cloned anyway per "Get the pieces" below, since `ac-worldserver` mounts the whole `modules/` tree for its `.conf.dist` templates — that's unrelated to the bridge's build.)
+**Exception**: mod-llm-chatter's Python bridge (`ac-llm-chatter-bridge` below) isn't one of the four prebuilt Hub images above, since it's a separate Python process from the C++ world server. Its build pulls source straight from `Hokken/mod-llm-chatter` on GitHub via a git build context — no local clone needed for this piece. (`deploy.sh` below still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for its `.conf.dist` templates — that's unrelated to the bridge's build.)
 
 ## Running it
 
-1. Get the pieces the compose file expects to find on disk next to it:
-   ```bash
-   git clone https://github.com/mod-playerbots/azerothcore-wotlk.git azerothcore-playerbots
-   cd azerothcore-playerbots
-   git clone https://github.com/Hokken/mod-llm-chatter.git modules/mod-llm-chatter
-   ```
-   (`env/dist/etc/` doesn't need to be pre-populated — each container copies its own `.conf.dist` template into `.conf` on first boot if one isn't already there.)
-2. Copy this repo's [`docker-compose.yml`](./docker-compose.yml) into that directory.
-3. Bring up the database and let it become healthy, then run the one-shot init containers, then start the servers:
-   ```bash
-   docker compose up -d ac-database
-   docker compose up ac-db-import ac-client-data-init
-   docker compose up -d ac-authserver ac-worldserver
-   ```
-4. **Configure mod-llm-chatter** (skip this and the `ac-llm-chatter-bridge` service entirely if you don't want LLM-driven bot chat):
-   - Edit `env/dist/etc/modules/mod_llm_chatter.conf` (created from the `.dist` template after step 3):
-     - `LLMChatter.Provider` — pick `anthropic`, `openai`, `google`, `openrouter`, or `ollama`
-     - The matching `LLMChatter.<Provider>.ApiKey` — your real key. **Never commit this file with a real key in it.**
-     - `LLMChatter.Database.Host = ac-database` — the `.dist` template ships with `localhost`, which is wrong once this runs in its own container on the compose network. This one bit us during setup; fix it or the bridge's health check fails with `[FAIL] Database connection` even though everything else passes.
-     - `LLMChatter.Database.Password` — match whatever `DB_ROOT_PASSWORD` you're using (default `password`), not the `.dist` template's placeholder.
-   - Then: `docker compose up -d ac-llm-chatter-bridge`
-   - Check it worked: `docker logs ac-llm-chatter-bridge` should show five `[PASS]` lines (config, module enabled, LLM provider config, database connection, LLM connectivity live test) ending in a report written to `/logs/healthcheck.log`. Any `[FAIL]` means bots will not chat until it's fixed.
+[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and `mod-llm-chatter` next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), and brings the stack up in the right order.
+
+**Without LLM-driven bot chat:**
+```bash
+./deploy.sh
+```
+
+**With it** — pick a provider and supply your real key (never committed, never baked into any image; it's written only to the gitignored `mod_llm_chatter.conf` on your disk):
+```bash
+LLM_PROVIDER=google LLM_API_KEY=<your Gemini key> ./deploy.sh
+```
+`LLM_PROVIDER` is one of `anthropic`, `openai`, `google`, `openrouter`, or `ollama` (`ollama` needs no key). See the script's header comment for all options, including overriding `DEPLOY_DIR` or `DB_ROOT_PASSWORD`.
+
+Didn't set a provider the first time? Re-run `deploy.sh` later with `LLM_PROVIDER`/`LLM_API_KEY` set — it'll fill those two fields into your existing `mod_llm_chatter.conf` and start the bridge, without touching anything else you've since customized in that file (`docker compose --profile llm-chatter up -d` also works directly if you'd rather edit the conf by hand).
+
+Check the bridge worked: `docker logs ac-llm-chatter-bridge` should show five `[PASS]` lines (config, module enabled, LLM provider config, database connection, LLM connectivity live test) ending in a report written to `/logs/healthcheck.log`. Any `[FAIL]` means bots will not chat until it's fixed.
 
 Connect with a **3.3.5a (12340)** WotLK client, pointed at this server's address on port 3724 (see below).
 
@@ -115,7 +109,7 @@ Rate.XP.Kill / Rate.XP.Quest / Rate.XP.Explore / etc. in `worldserver.conf` cont
 
 The Docker images are portable — the state and secrets are not, and need to move separately:
 
-1. **Install Docker + Compose** on the new host, clone this repo plus the source pieces from "Running it" above.
+1. **Install Docker + Compose** on the new host, clone this repo, then run `./deploy.sh` once just far enough to get the pieces in place and the database up — stop it (`Ctrl-C`, then `docker compose stop`) right after `ac-database` becomes healthy, before it imports a fresh schema. (Migration needs your restored dump in place first, so don't let it run to completion here — that's the one case where the one-shot script isn't the right tool.)
 2. **Copy the database**, don't start fresh, unless you want to:
    ```bash
    # on the old host
