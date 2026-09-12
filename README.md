@@ -69,7 +69,3 @@ environment:
 ```
 
 This config keeps 80 random bots logged in at all times, leveled to match real players, clustered near player zones, with greetings enabled.
-
-## Notes on host setup
-
-The host disk was originally undersized for the world/character databases and client data; it was grown online with `growpart` → `pvresize` → `lvextend` → `resize2fs` (no downtime, no reboot) — standard procedure for extending an LVM-on-partition root filesystem after growing the underlying disk.
