@@ -75,6 +75,7 @@ DEPLOY_DIR="${DEPLOY_DIR:-$SCRIPT_DIR/../azerothcore-playerbots}"
 PLAYERBOTS_DIR="$DEPLOY_DIR/modules/mod-playerbots"
 SOLOCRAFT_DIR="$DEPLOY_DIR/modules/mod-solocraft"
 LLM_DIR="$DEPLOY_DIR/modules/mod-llm-chatter"
+AHBOT_DIR="$DEPLOY_DIR/modules/mod-ah-bot"
 
 log() { echo "==> $*"; }
 
@@ -154,6 +155,7 @@ clone_module() {
 clone_module "$LLM_DIR" https://github.com/Hokken/mod-llm-chatter.git mod-llm-chatter
 clone_module "$PLAYERBOTS_DIR" https://github.com/mod-playerbots/mod-playerbots.git mod-playerbots
 clone_module "$SOLOCRAFT_DIR" https://github.com/azerothcore/mod-solocraft.git mod-solocraft
+clone_module "$AHBOT_DIR" https://github.com/NathanHandley/mod-ah-bot-plus.git mod-ah-bot
 
 # 5. Compose file
 cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
@@ -194,6 +196,18 @@ if [ ! -f "$SOLOCRAFT_CONF" ]; then
   log "Created $SOLOCRAFT_CONF from the .dist template."
 else
   log "$SOLOCRAFT_CONF already exists — leaving your settings as-is."
+fi
+
+# mod_ahbot.conf: ships disabled by design (AuctionHouseBot.EnableSeller
+# defaults off in the .dist template) — it needs at least one real,
+# non-playerbot character GUID in AuctionHouseBot.GUIDs before it'll do
+# anything, which only you can supply. See the README for activation steps.
+AHBOT_CONF="$CONF_DIR/mod_ahbot.conf"
+if [ ! -f "$AHBOT_CONF" ]; then
+  cp "$AHBOT_DIR/conf/mod_ahbot.conf.dist" "$AHBOT_CONF"
+  log "Created $AHBOT_CONF from the .dist template (disabled until you add a character GUID — see README)."
+else
+  log "$AHBOT_CONF already exists — leaving your settings as-is."
 fi
 
 # mod_llm_chatter.conf — created once from the .dist template, never

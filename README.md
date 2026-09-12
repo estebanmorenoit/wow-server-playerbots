@@ -1,6 +1,6 @@
 # wow-server-playerbots
 
-Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) with the [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots), [mod-solocraft](https://github.com/azerothcore/mod-solocraft), and [mod-llm-chatter](https://github.com/Hokken/mod-llm-chatter) modules.
+Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) with the [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots), [mod-solocraft](https://github.com/azerothcore/mod-solocraft), [mod-llm-chatter](https://github.com/Hokken/mod-llm-chatter), and [mod-ah-bot](https://github.com/NathanHandley/mod-ah-bot-plus) modules.
 
 Not affiliated with Blizzard Entertainment. For personal/private-server use.
 
@@ -11,29 +11,30 @@ Not affiliated with Blizzard Entertainment. For personal/private-server use.
   - [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots) — AI-controlled bot characters that populate the world
   - [mod-solocraft](https://github.com/azerothcore/mod-solocraft) — scales dungeon/raid boss stats to your actual group size
   - [mod-llm-chatter](https://github.com/Hokken/mod-llm-chatter) — bots chat dynamically via a real LLM (Anthropic/OpenAI/Google/OpenRouter/Ollama) instead of canned lines
+  - [mod-ah-bot](https://github.com/NathanHandley/mod-ah-bot-plus) — populates the Auction House with bot-driven listings (otherwise permanently empty with no real players) — see [Auction House bot](#auction-house-bot) below to activate it
 - **Database**: MySQL 8.4 (official `mysql:8.4` image — not customized)
 - **Orchestration**: Docker Compose
 
 ## Prebuilt images
 
-The C++ side (core + all three modules) is baked into these images — no build toolchain needed to run the server:
+The C++ side (core + all four modules) is baked into these images — no build toolchain needed to run the server:
 
 | Image | Purpose |
 |---|---|
-| [`estebanmorenoit/ac-wotlk-worldserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots) | World server (game logic), with all three modules built in |
+| [`estebanmorenoit/ac-wotlk-worldserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots) | World server (game logic), with all four modules built in |
 | [`estebanmorenoit/ac-wotlk-authserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-authserver-playerbots) | Auth/login server (port 3724) |
 | [`estebanmorenoit/ac-wotlk-db-import-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-db-import-playerbots) | One-shot DB bootstrap/migration (run before the servers) |
 | [`estebanmorenoit/ac-wotlk-client-data-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-client-data-playerbots) | One-shot client data extraction (maps/vmaps/mmaps/dbc) |
 
-All four are built from the same `apps/docker/Dockerfile` in the AzerothCore playerbots fork, using a different `target` per service.
+All four are built from the same `apps/docker/Dockerfile`, using a different `target` per service — but from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow (`esteban-custom-build.yml`, manual `workflow_dispatch` trigger), not the upstream project's own CI. That workflow checks out all four modules explicitly (`modules/*` is gitignored in the core repo by design — see its `modules/CMakeLists.txt` for the generic auto-discovery mechanism modules rely on) and patches a known upstream compile bug in mod-llm-chatter before building. Images currently deployed here use the `:ahbot-test` tag rather than `:master`, so the pre-ahbot images stay available as a known-good fallback — see `docker-compose.yml`.
 
 **Exception**: mod-llm-chatter's Python bridge (`ac-llm-chatter-bridge` below) isn't one of the four prebuilt Hub images above, since it's a separate Python process from the C++ world server. Its build pulls source straight from `Hokken/mod-llm-chatter` on GitHub via a git build context — no local clone needed for this piece. (`deploy.sh` below still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for its `.conf.dist` templates — that's unrelated to the bridge's build.)
 
 ## Running it
 
-[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and all three modules next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), materializes each module's `.conf` from its `.dist` template, brings the stack up in the right order, points the realm at this host's address, and creates a game login account once worldserver is ready.
+[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and all four modules next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), materializes each module's `.conf` from its `.dist` template, brings the stack up in the right order, points the realm at this host's address, and creates a game login account once worldserver is ready.
 
-The C++ side of `mod-playerbots` and `mod-solocraft` is already baked into the prebuilt images, but deploy.sh still clones both — without their `conf/*.conf.dist` templates present on disk, `playerbots.conf`/`Solocraft.conf` never get generated and worldserver runs with incomplete bot config (this has crashed the server outright on a prior deploy).
+The C++ side of `mod-playerbots`, `mod-solocraft`, and `mod-ah-bot` is already baked into the prebuilt images, but deploy.sh still clones all three — without their `conf/*.conf.dist` templates present on disk, `playerbots.conf`/`Solocraft.conf`/`mod_ahbot.conf` never get generated and worldserver runs with incomplete config (missing `playerbots.conf`/`Solocraft.conf` has crashed the server outright on a prior deploy).
 
 **Without LLM-driven bot chat:**
 ```bash
@@ -122,6 +123,17 @@ The WotLK client reads which realm to connect to from a text file called `realml
 Bot behavior is controlled via environment variables on the `ac-worldserver` service — see [`docker-compose.yml`](./docker-compose.yml). Current tuning: 75 random bots (ambient world population, separate from the companions you recruit into your own party), leveled to match real players, clustered near player zones, built-in greet disabled (mod-llm-chatter handles chat instead), and per-bot AI cost cut from the core default of 10 to 6 iterations per tick — raise either if you have cores to spare (this host is 4 threads total, shared with ~30 unrelated containers, and `ac-worldserver` is capped at 3 CPUs / 6GB via `deploy.resources.limits` so it can't starve the rest of the box). `AC_MAP_UPDATE_THREADS=3` spreads map/world ticks across those same 3 cores instead of pinning them to one.
 
 mod-llm-chatter's bridge polls the database for chat requests; `LLMChatter.Bridge.PollIntervalSeconds` in `mod_llm_chatter.conf` was raised from its 1s default to 10s — a 1s loop was a measurable chunk of the bridge's CPU for a queue that's rarely hot, and 10s is imperceptible for ambient bot chat.
+
+## Auction House bot
+
+`mod_ahbot.conf` ships **disabled** (`AuctionHouseBot.EnableSeller = false`, `AuctionHouseBot.GUIDs = 0`) — it needs at least one real character GUID before it'll list anything, and that has to come from you:
+
+1. Log into the game with a normal (non-GM, non-playerbot) character you're fine never playing again — the module's own docs warn that browsing the AH with that same character can hang with "Searching for items..." forever.
+2. Find its GUID: `.character info` in-game while targeting/logged in as that character, or query `SELECT guid, name FROM characters WHERE name = 'YourCharName';` against `acore_characters`.
+3. Edit `env/dist/etc/modules/mod_ahbot.conf` on the host: set `AuctionHouseBot.GUIDs` to that GUID and `AuctionHouseBot.EnableSeller = true`.
+4. `.ahbot reload` in-game (GM) to pick up the change without a restart, then `.ahbot update` to force the first batch of listings rather than waiting for the next cycle.
+
+It only adds `AuctionHouseBot.ItemsPerCycle` (75 by default) items per tick, so expect the AH to take a few hours to fully populate. `.ahbot empty` clears bot-listed auctions if you want to reset and retune pricing (player auctions are untouched).
 
 ## GM commands reference (this build)
 
