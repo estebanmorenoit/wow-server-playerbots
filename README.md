@@ -113,6 +113,26 @@ Verified against this exact core's command tables (`src/server/scripts/Commands/
 
 Rate.XP.Kill / Rate.XP.Quest / Rate.XP.Explore / etc. in `worldserver.conf` control passive XP gain server-wide (default `1`); change them and run `.reload config` to apply without restarting.
 
+## Backups
+
+[`backup.sh`](./backup.sh) dumps every database (`--all-databases`, so characters/guilds/world/playerbots/auth) from the running `ac-database` container to a timestamped, gzip-compressed file under `backups/` (gitignored — never committed), then deletes local dumps older than `BACKUP_RETENTION_DAYS` (default 14).
+
+```bash
+./backup.sh
+```
+
+A cron job runs it daily at 04:00, logging to `backups/backup.log`:
+```
+0 4 * * * /home/esteban/wow-server-playerbots/backup.sh >> /home/esteban/wow-server-playerbots/backups/backup.log 2>&1
+```
+
+Restore a dump:
+```bash
+gunzip -c backups/<file>.sql.gz | docker exec -i ac-database mysql -u root -p"$DB_ROOT_PASSWORD"
+```
+
+These are local backups only — if the disk itself is lost, they're gone too. Consider copying `backups/` off-host periodically for real disaster recovery.
+
 ## Migrating to another host (e.g. a more powerful NUC)
 
 The Docker images are portable — the state and secrets are not, and need to move separately:

@@ -56,6 +56,8 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="${DEPLOY_DIR:-$SCRIPT_DIR/../azerothcore-playerbots}"
+PLAYERBOTS_DIR="$DEPLOY_DIR/modules/mod-playerbots"
+SOLOCRAFT_DIR="$DEPLOY_DIR/modules/mod-solocraft"
 LLM_DIR="$DEPLOY_DIR/modules/mod-llm-chatter"
 
 log() { echo "==> $*"; }
@@ -117,7 +119,26 @@ else
   log "Core already present at $DEPLOY_DIR — leaving it as-is (not touching a running server's checkout)."
 fi
 
-# 2. mod-llm-chatter source (needed for its conf.dist template and the bridge's
+# 2. mod-playerbots source (the worldserver image ships this module's
+#    conf.dist from its own baked-in defaults regardless, but the module's
+#    source is expected under modules/ per the project layout, and this is
+#    what deploy.sh's re-run guard checks)
+if [ ! -d "$PLAYERBOTS_DIR/.git" ]; then
+  log "Cloning mod-playerbots into $PLAYERBOTS_DIR ..."
+  git clone https://github.com/mod-playerbots/mod-playerbots.git "$PLAYERBOTS_DIR"
+else
+  log "mod-playerbots already present at $PLAYERBOTS_DIR — leaving it as-is."
+fi
+
+# 3. mod-solocraft source
+if [ ! -d "$SOLOCRAFT_DIR/.git" ]; then
+  log "Cloning mod-solocraft into $SOLOCRAFT_DIR ..."
+  git clone https://github.com/azerothcore/mod-solocraft.git "$SOLOCRAFT_DIR"
+else
+  log "mod-solocraft already present at $SOLOCRAFT_DIR — leaving it as-is."
+fi
+
+# 4. mod-llm-chatter source (needed for its conf.dist template and the bridge's
 #    build context resolves this from GitHub directly, but ac-worldserver still
 #    mounts this directory for module .conf.dist discovery)
 if [ ! -d "$LLM_DIR/.git" ]; then
@@ -127,11 +148,11 @@ else
   log "mod-llm-chatter already present at $LLM_DIR — leaving it as-is."
 fi
 
-# 3. Compose file
+# 5. Compose file
 cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
 log "Copied docker-compose.yml into $DEPLOY_DIR."
 
-# 4. .env (DB root password) — generated once, never overwritten
+# 6. .env (DB root password) — generated once, never overwritten
 ENV_FILE="$DEPLOY_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
   PW="${DB_ROOT_PASSWORD:-$(openssl rand -hex 16)}"
@@ -144,11 +165,33 @@ fi
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 
-# 5. mod_llm_chatter.conf — created once from the .dist template, never
-#    overwritten on re-runs so we don't clobber settings you've tuned by hand
+# 7. Module conf files — created once from each .dist template, never
+#    overwritten on re-runs so we don't clobber settings tuned by hand.
 CONF_DIR="$DEPLOY_DIR/env/dist/etc/modules"
-CONF_FILE="$CONF_DIR/mod_llm_chatter.conf"
 mkdir -p "$CONF_DIR"
+
+# playerbots.conf / Solocraft.conf: their DB connection settings are
+# overridden at runtime via AC_PLAYERBOTS_DATABASE_INFO in docker-compose.yml,
+# so — unlike mod_llm_chatter.conf below — no sed fixups are needed here.
+PLAYERBOTS_CONF="$CONF_DIR/playerbots.conf"
+if [ ! -f "$PLAYERBOTS_CONF" ]; then
+  cp "$PLAYERBOTS_DIR/conf/playerbots.conf.dist" "$PLAYERBOTS_CONF"
+  log "Created $PLAYERBOTS_CONF from the .dist template."
+else
+  log "$PLAYERBOTS_CONF already exists — leaving your settings as-is."
+fi
+
+SOLOCRAFT_CONF="$CONF_DIR/Solocraft.conf"
+if [ ! -f "$SOLOCRAFT_CONF" ]; then
+  cp "$SOLOCRAFT_DIR/conf/Solocraft.conf.dist" "$SOLOCRAFT_CONF"
+  log "Created $SOLOCRAFT_CONF from the .dist template."
+else
+  log "$SOLOCRAFT_CONF already exists — leaving your settings as-is."
+fi
+
+# mod_llm_chatter.conf — created once from the .dist template, never
+# overwritten on re-runs so we don't clobber settings you've tuned by hand
+CONF_FILE="$CONF_DIR/mod_llm_chatter.conf"
 if [ ! -f "$CONF_FILE" ]; then
   cp "$LLM_DIR/conf/mod_llm_chatter.conf.dist" "$CONF_FILE"
   # Fixes the two defaults that are always wrong once this runs in Docker:
@@ -160,7 +203,7 @@ else
   log "$CONF_FILE already exists — leaving your settings as-is."
 fi
 
-# 6. Wire up the chosen LLM provider, if any
+# 8. Wire up the chosen LLM provider, if any
 START_BRIDGE=0
 if [ -n "${LLM_PROVIDER:-}" ]; then
   case "$LLM_PROVIDER" in
@@ -191,7 +234,7 @@ else
   log "Configure $CONF_FILE and re-run with LLM_PROVIDER/LLM_API_KEY set whenever you're ready, or start it manually per the README."
 fi
 
-# 7. Bring the stack up
+# 9. Bring the stack up
 cd "$DEPLOY_DIR"
 if [ "$START_BRIDGE" -eq 1 ]; then
   log "Starting the full stack, including ac-llm-chatter-bridge..."
