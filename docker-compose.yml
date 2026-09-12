@@ -1,0 +1,86 @@
+services:
+  ac-database:
+    container_name: ac-database
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-password}
+    volumes:
+      - ac-mysql-data:/var/lib/mysql
+    networks:
+      - ac-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ac-client-data-init:
+    container_name: ac-client-data-init
+    image: estebanmorenoit/ac-wotlk-client-data-playerbots:master
+    volumes:
+      - ac-client-data:/azerothcore/env/dist/data
+    networks:
+      - ac-network
+
+  ac-db-import:
+    container_name: ac-db-import
+    image: estebanmorenoit/ac-wotlk-db-import-playerbots:master
+    environment:
+      AC_DATABASE_HOST: ac-database
+      AC_DATABASE_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-password}
+    depends_on:
+      ac-database:
+        condition: service_healthy
+    networks:
+      - ac-network
+
+  ac-authserver:
+    container_name: ac-authserver
+    image: estebanmorenoit/ac-wotlk-authserver-playerbots:master
+    restart: unless-stopped
+    environment:
+      AC_DATABASE_HOST: ac-database
+      AC_DATABASE_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-password}
+    depends_on:
+      ac-db-import:
+        condition: service_completed_successfully
+    ports:
+      - "3724:3724"
+    networks:
+      - ac-network
+
+  ac-worldserver:
+    container_name: ac-worldserver
+    image: estebanmorenoit/ac-wotlk-worldserver-playerbots:master
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    environment:
+      AC_DATABASE_HOST: ac-database
+      AC_DATABASE_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-password}
+      AC_AI_PLAYERBOT_RANDOM_BOT_AUTOLOGIN: "1"
+      AC_AI_PLAYERBOT_MIN_RANDOM_BOTS: "80"
+      AC_AI_PLAYERBOT_MAX_RANDOM_BOTS: "80"
+      AC_AI_PLAYERBOT_SYNC_LEVEL_WITH_PLAYERS: "1"
+      AC_AI_PLAYERBOT_RANDOM_BOT_CONCENTRATE_IN_PLAYER_ZONE: "1"
+      AC_AI_PLAYERBOT_ENABLE_GREET: "1"
+    volumes:
+      - ac-client-data:/azerothcore/env/dist/data
+    depends_on:
+      ac-db-import:
+        condition: service_completed_successfully
+      ac-client-data-init:
+        condition: service_completed_successfully
+    ports:
+      - "7878:7878"
+      - "8085:8085"
+    networks:
+      - ac-network
+
+networks:
+  ac-network:
+
+volumes:
+  ac-mysql-data:
+  ac-client-data:
