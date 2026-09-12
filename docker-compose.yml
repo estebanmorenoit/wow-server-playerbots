@@ -64,6 +64,16 @@ services:
     restart: unless-stopped
     stdin_open: true
     tty: true
+    # Nothing capped this before — worldserver could (and did) take whatever
+    # the host had, competing directly with the ~30 unrelated containers also
+    # running here. 3 of this host's 4 threads mirrors AC_MAP_UPDATE_THREADS
+    # below (leaves headroom for DB/auth/OS); memory has never gone past ~4.5GB
+    # even with far more bots, so 6g is slack, not a squeeze.
+    deploy:
+      resources:
+        limits:
+          cpus: "3.0"
+          memory: 6g
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
       AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
@@ -71,15 +81,35 @@ services:
       # mod-playerbots creates/manages this database itself on first connect
       AC_PLAYERBOTS_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_playerbots"
       AC_AI_PLAYERBOT_RANDOM_BOT_AUTOLOGIN: "1"
-      AC_AI_PLAYERBOT_MIN_RANDOM_BOTS: "100"
-      AC_AI_PLAYERBOT_MAX_RANDOM_BOTS: "100"
+      # Random bots are ambient world population (NPCs wandering zones), not
+      # your party — those are recruited separately in-game and aren't capped
+      # by this. Was bumped to 300 at some point without updating the limits
+      # below; on this 4-thread host that alone pushed worldserver to ~236%
+      # CPU with the host load average sustained above its thread count.
+      # Dropped back down given this box also runs ~30 unrelated containers.
+      AC_AI_PLAYERBOT_MIN_RANDOM_BOTS: "75"
+      AC_AI_PLAYERBOT_MAX_RANDOM_BOTS: "75"
       AC_AI_PLAYERBOT_SYNC_LEVEL_WITH_PLAYERS: "1"
       AC_AI_PLAYERBOT_RANDOM_BOT_CONCENTRATE_IN_PLAYER_ZONE: "1"
       # Greet disabled: mod-llm-chatter replaces built-in bot chat (see below).
       AC_AI_PLAYERBOT_ENABLE_GREET: "0"
-      # Per-bot AI cost per tick (core default is 10) — tuned down for CPU headroom
-      # on a 4-core host running 100 bots. Raise if you have cores to spare.
+      # Per-bot AI cost per tick (core default is 10). Total AI cost scales as
+      # bots x IterationsPerTick; this host is 4 threads shared with other
+      # services, so bot count and iterations are balanced together rather
+      # than raised independently — measure headroom (docker stats / server
+      # info uptime diff) before increasing either further.
       AC_AI_PLAYERBOT_ITERATIONS_PER_TICK: "6"
+      # DataDir defaults to "." which resolves against the image's WorkingDir
+      # (/azerothcore), not against the client-data volume mounted below —
+      # without this the world server fails "Failed to find map files for
+      # starting areas" even though the volume has real data in it.
+      AC_DATA_DIR: "/azerothcore/env/dist/data"
+      # Default is 1 (single-threaded map/world updates) — that pins the whole
+      # game-tick loop, playerbot AI included, to one core no matter how many
+      # cores the host has. Set to 3 of this host's 4 cores so world updates
+      # (multiple continents/instances/battlegrounds) can actually spread out;
+      # left at 1 core's worth of headroom for DB/auth/OS overhead.
+      AC_MAP_UPDATE_THREADS: "3"
     volumes:
       - ac-client-data:/azerothcore/env/dist/data
       - ./env/dist/etc:/azerothcore/env/dist/etc

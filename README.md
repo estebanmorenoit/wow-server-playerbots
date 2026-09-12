@@ -91,7 +91,9 @@ The WotLK client reads which realm to connect to from a text file called `realml
 
 ## Playerbot configuration
 
-Bot behavior is controlled via environment variables on the `ac-worldserver` service — see [`docker-compose.yml`](./docker-compose.yml). Current tuning: 100 random bots, leveled to match real players, clustered near player zones, built-in greet disabled (mod-llm-chatter handles chat instead), and per-bot AI cost cut from the core default of 10 to 6 iterations per tick to keep CPU headroom on a 4-core host — raise that last one if you have cores to spare.
+Bot behavior is controlled via environment variables on the `ac-worldserver` service — see [`docker-compose.yml`](./docker-compose.yml). Current tuning: 75 random bots (ambient world population, separate from the companions you recruit into your own party), leveled to match real players, clustered near player zones, built-in greet disabled (mod-llm-chatter handles chat instead), and per-bot AI cost cut from the core default of 10 to 6 iterations per tick — raise either if you have cores to spare (this host is 4 threads total, shared with ~30 unrelated containers, and `ac-worldserver` is capped at 3 CPUs / 6GB via `deploy.resources.limits` so it can't starve the rest of the box). `AC_MAP_UPDATE_THREADS=3` spreads map/world ticks across those same 3 cores instead of pinning them to one.
+
+mod-llm-chatter's bridge polls the database for chat requests; `LLMChatter.Bridge.PollIntervalSeconds` in `mod_llm_chatter.conf` was raised from its 1s default to 10s — a 1s loop was a measurable chunk of the bridge's CPU for a queue that's rarely hot, and 10s is imperceptible for ambient bot chat.
 
 ## GM commands reference (this build)
 
