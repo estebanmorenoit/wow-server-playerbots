@@ -32,6 +32,14 @@
 #                     you can configure and start it later, see the README.
 #   LLM_API_KEY       Required unless LLM_PROVIDER=ollama. Never printed, never
 #                     written anywhere but the gitignored conf file below.
+#   ADMIN_ACCOUNT_NAME     Game account created on first deploy, promoted to GM
+#                          (default: admin). Set to an empty string to skip
+#                          account creation entirely. Only ever attempted once
+#                          per checkout (tracked by a marker file) — safe to
+#                          re-run without recreating or erroring on it.
+#   ADMIN_ACCOUNT_PASSWORD Password for that account (default: test1234 — a
+#                          simple placeholder for local testing; change it, or
+#                          set your own, before exposing this server publicly).
 
 set -euo pipefail
 
@@ -199,6 +207,98 @@ if [ "$START_BRIDGE" -eq 1 ]; then
 else
   log "Starting the core stack (auth/world/database)..."
   docker compose up -d
+fi
+
+# 8. Create a test game account, once. Uses a pty-wrapped `docker attach`
+# since the worldserver console needs a real TTY (plain piped input is
+# refused). Only attempted once per checkout, tracked by a marker file, so
+# re-running deploy.sh never tries to recreate or erroneously fails on it.
+ADMIN_ACCOUNT_NAME="${ADMIN_ACCOUNT_NAME-admin}"
+ADMIN_ACCOUNT_PASSWORD="${ADMIN_ACCOUNT_PASSWORD:-test1234}"
+ACCOUNT_MARKER="$DEPLOY_DIR/.admin-account-created"
+
+if [ -z "$ADMIN_ACCOUNT_NAME" ]; then
+  log "ADMIN_ACCOUNT_NAME set to empty — skipping account creation."
+elif [ -f "$ACCOUNT_MARKER" ]; then
+  log "Admin account already created previously — skipping (remove $ACCOUNT_MARKER to force another attempt)."
+elif [ "${#ADMIN_ACCOUNT_NAME}" -gt 17 ]; then
+  echo "ADMIN_ACCOUNT_NAME '$ADMIN_ACCOUNT_NAME' is too long (AzerothCore's client limit is 17 characters) — skipping account creation. Pick a shorter name and re-run." >&2
+else
+  log "Waiting for worldserver to finish starting up so it can accept console commands (can take a minute or two on first boot)..."
+  if timeout 300 docker compose logs -f ac-worldserver 2>&1 | grep -qm1 "worldserver-daemon) ready\.\.\."; then
+    log "Creating game account '$ADMIN_ACCOUNT_NAME' and granting GM level..."
+    RESULT="$(ADMIN_NAME="$ADMIN_ACCOUNT_NAME" ADMIN_PASS="$ADMIN_ACCOUNT_PASSWORD" python3 - <<'PYEOF'
+import os, pty, subprocess, select, time, sys
+
+name = os.environ["ADMIN_NAME"]
+pw = os.environ["ADMIN_PASS"]
+
+master, slave = pty.openpty()
+proc = subprocess.Popen(["docker", "attach", "ac-worldserver"], stdin=slave, stdout=slave, stderr=slave)
+os.close(slave)
+
+def drain(t=2.5):
+    out = b""
+    end = time.time() + t
+    while time.time() < end:
+        r, _, _ = select.select([master], [], [], 0.2)
+        if master in r:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+    return out.decode(errors="replace")
+
+time.sleep(1)
+drain()
+os.write(master, f"account create {name} {pw}\r\n".encode())
+create_out = drain(3)
+
+# Only ever touch gmlevel on an account this run just created — never on one
+# that already existed (creation failed here for any other reason).
+gm_out = ""
+if "Account created" in create_out:
+    os.write(master, f"account set gmlevel {name} 3 -1\r\n".encode())
+    gm_out = drain(3)
+
+# Detach (Ctrl-P Ctrl-Q) then stop our local attach client only — this never
+# touches the container itself, same as a network client disconnecting.
+os.write(master, b"\x10\x11")
+time.sleep(0.5)
+proc.terminate()
+try:
+    proc.wait(timeout=5)
+except Exception:
+    proc.kill()
+
+if "Account created" in create_out and "security level" in gm_out:
+    print("CREATED")
+elif "already exist" in create_out:
+    print("ALREADY_EXISTS")
+else:
+    print("UNKNOWN")
+    sys.stderr.write(create_out + gm_out)
+PYEOF
+)"
+    case "$RESULT" in
+      CREATED)
+        touch "$ACCOUNT_MARKER"
+        log "Account '$ADMIN_ACCOUNT_NAME' created with GM level 3, password '$ADMIN_ACCOUNT_PASSWORD' — this is a simple testing default, change it before exposing this server publicly."
+        ;;
+      ALREADY_EXISTS)
+        touch "$ACCOUNT_MARKER"
+        log "Account '$ADMIN_ACCOUNT_NAME' already existed on the server — left as-is."
+        ;;
+      *)
+        echo "Couldn't confirm account creation via the console — check manually: docker attach ac-worldserver (detach with Ctrl-P Ctrl-Q, never Ctrl-C)" >&2
+        ;;
+    esac
+  else
+    echo "worldserver did not report ready within 5 minutes — skipping automatic account creation. Create one manually per the README." >&2
+  fi
 fi
 
 log "Done. Tail logs with: docker logs -f ac-worldserver"

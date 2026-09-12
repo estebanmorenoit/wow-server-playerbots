@@ -31,7 +31,7 @@ All four are built from the same `apps/docker/Dockerfile` in the AzerothCore pla
 
 ## Running it
 
-[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and `mod-llm-chatter` next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), and brings the stack up in the right order.
+[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and `mod-llm-chatter` next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), brings the stack up in the right order, and creates a game login account once worldserver is ready.
 
 **Without LLM-driven bot chat:**
 ```bash
@@ -45,6 +45,22 @@ LLM_PROVIDER=google LLM_API_KEY=<your Gemini key> ./deploy.sh
 `LLM_PROVIDER` is one of `anthropic`, `openai`, `google`, `openrouter`, or `ollama` (`ollama` needs no key). See the script's header comment for all options, including overriding `DEPLOY_DIR` or `DB_ROOT_PASSWORD`.
 
 Didn't set a provider the first time? Re-run `deploy.sh` later with `LLM_PROVIDER`/`LLM_API_KEY` set — it'll fill those two fields into your existing `mod_llm_chatter.conf` and start the bridge, without touching anything else you've since customized in that file (`docker compose --profile llm-chatter up -d` also works directly if you'd rather edit the conf by hand).
+
+### Login account
+
+`deploy.sh` also creates a game account and promotes it to GM (level 3) once worldserver reports ready — by default `admin` / `test1234`. **That password is a placeholder for local testing, not something to leave in place on a server anyone else can reach.** Override it:
+```bash
+ADMIN_ACCOUNT_NAME=myaccount ADMIN_ACCOUNT_PASSWORD=<a real password> ./deploy.sh
+```
+Account names are capped at 17 characters (AzerothCore's client limit) — the script checks this upfront and skips creation with a clear error if you go over. Set `ADMIN_ACCOUNT_NAME=` (empty) to skip account creation entirely. Like everything else in this script, it only runs once per checkout (tracked by a `.admin-account-created` marker file) — re-running `deploy.sh` won't try to recreate it or touch its GM level, and if the name already existed on the server, it's left completely alone rather than modified.
+
+To create additional accounts later, use the worldserver console directly:
+```bash
+docker attach ac-worldserver
+account create <username> <password>
+account set gmlevel <username> 3 -1   # optional, grants GM access
+```
+Detach with `Ctrl-P` then `Ctrl-Q` — **never `Ctrl-C`**, which sends SIGINT to the worldserver process itself and will kill the server.
 
 ### Uninstalling
 
