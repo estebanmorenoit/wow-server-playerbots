@@ -46,6 +46,14 @@ LLM_PROVIDER=google LLM_API_KEY=<your Gemini key> ./deploy.sh
 
 Didn't set a provider the first time? Re-run `deploy.sh` later with `LLM_PROVIDER`/`LLM_API_KEY` set — it'll fill those two fields into your existing `mod_llm_chatter.conf` and start the bridge, without touching anything else you've since customized in that file (`docker compose --profile llm-chatter up -d` also works directly if you'd rather edit the conf by hand).
 
+### Uninstalling
+
+```bash
+./deploy.sh --uninstall            # stop and remove containers/networks; keeps the database, client-data, and checkout — reversible, just re-run ./deploy.sh
+./deploy.sh --uninstall --purge    # also deletes the database + client-data volumes and the entire checkout (including your API key) — permanent
+```
+Both prompt for a typed `yes` before doing anything; add `-y`/`--yes` to skip that for scripting. `--purge` destroys every character, guild, and all progress — there's no undo, so back up the database first (see "Migrating to another host" below) if there's any chance you'll want it again.
+
 Check the bridge worked: `docker logs ac-llm-chatter-bridge` should show five `[PASS]` lines (config, module enabled, LLM provider config, database connection, LLM connectivity live test) ending in a report written to `/logs/healthcheck.log`. Any `[FAIL]` means bots will not chat until it's fixed.
 
 Connect with a **3.3.5a (12340)** WotLK client, pointed at this server's address on port 3724 (see below).

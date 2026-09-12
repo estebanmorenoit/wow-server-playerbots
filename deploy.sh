@@ -11,6 +11,17 @@
 #   LLM_PROVIDER=google LLM_API_KEY=AIza... ./deploy.sh
 #   LLM_PROVIDER=ollama ./deploy.sh                      # no key needed
 #
+#   ./deploy.sh --uninstall            Stop and remove containers/networks.
+#                                       Keeps the database, client-data volumes,
+#                                       and the checkout on disk — safe, reversible,
+#                                       just re-run ./deploy.sh to bring it back.
+#   ./deploy.sh --uninstall --purge    Also deletes the database and client-data
+#                                       volumes AND the entire checkout (source,
+#                                       .env, and mod_llm_chatter.conf with your
+#                                       API key). PERMANENT — all characters,
+#                                       guilds, and progress are gone.
+#   Add -y/--yes to either to skip the confirmation prompt (for scripting).
+#
 # Env vars:
 #   DEPLOY_DIR       Where to clone/run the server (default: ../azerothcore-playerbots
 #                     relative to this script)
@@ -24,11 +35,79 @@
 
 set -euo pipefail
 
+UNINSTALL=0
+PURGE=0
+ASSUME_YES=0
+for arg in "$@"; do
+  case "$arg" in
+    --uninstall) UNINSTALL=1 ;;
+    --purge) PURGE=1 ;;
+    -y|--yes) ASSUME_YES=1 ;;
+    -h|--help)
+      sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $arg (see --help)" >&2
+      exit 1
+      ;;
+  esac
+done
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="${DEPLOY_DIR:-$SCRIPT_DIR/../azerothcore-playerbots}"
 LLM_DIR="$DEPLOY_DIR/modules/mod-llm-chatter"
 
 log() { echo "==> $*"; }
+
+if [ "$UNINSTALL" -eq 1 ]; then
+  if [ ! -d "$DEPLOY_DIR" ]; then
+    log "$DEPLOY_DIR doesn't exist — nothing to uninstall."
+    exit 0
+  fi
+
+  echo "This will stop and remove the wow-server-playerbots containers and networks in $DEPLOY_DIR."
+  if [ "$PURGE" -eq 1 ]; then
+    echo
+    echo "--purge also requested — this PERMANENTLY DELETES:"
+    echo "  - the database volume (every character, guild, and all progress)"
+    echo "  - the client-data volume"
+    echo "  - the entire checkout at $DEPLOY_DIR, including .env and mod_llm_chatter.conf (your LLM API key)"
+    echo
+    echo "This cannot be undone."
+  fi
+
+  if [ "$ASSUME_YES" -ne 1 ]; then
+    read -r -p "Type 'yes' to continue: " CONFIRM
+    if [ "$CONFIRM" != "yes" ]; then
+      echo "Aborted, nothing was changed."
+      exit 1
+    fi
+  fi
+
+  if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
+    cd "$DEPLOY_DIR"
+    if [ "$PURGE" -eq 1 ]; then
+      log "Stopping the stack and removing its volumes..."
+      docker compose --profile llm-chatter down -v --remove-orphans
+    else
+      log "Stopping the stack (volumes and files are kept)..."
+      docker compose --profile llm-chatter down --remove-orphans
+    fi
+  else
+    log "No docker-compose.yml found in $DEPLOY_DIR — skipping docker compose down."
+  fi
+
+  if [ "$PURGE" -eq 1 ]; then
+    log "Deleting $DEPLOY_DIR ..."
+    rm -rf "$DEPLOY_DIR"
+    log "Done — everything has been removed."
+  else
+    log "Done. Containers and networks are gone; the database, client-data, and $DEPLOY_DIR are untouched."
+    log "Re-run ./deploy.sh to bring it back up, or ./deploy.sh --uninstall --purge to delete the database and checkout too."
+  fi
+  exit 0
+fi
 
 # 1. AzerothCore core (Playerbot branch fork)
 if [ ! -d "$DEPLOY_DIR/.git" ]; then
