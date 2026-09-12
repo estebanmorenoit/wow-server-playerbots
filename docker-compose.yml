@@ -29,6 +29,8 @@ services:
     container_name: ac-db-import
     image: estebanmorenoit/ac-wotlk-db-import-playerbots:master
     environment:
+      AC_DATA_DIR: "/azerothcore/env/dist/data"
+      AC_LOGS_DIR: "/azerothcore/env/dist/logs"
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
       AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
       AC_CHARACTER_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_characters"
@@ -46,6 +48,7 @@ services:
     image: estebanmorenoit/ac-wotlk-authserver-playerbots:master
     restart: unless-stopped
     environment:
+      AC_LOGS_DIR: "/azerothcore/env/dist/logs"
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
     volumes:
       - ./env/dist/etc:/azerothcore/env/dist/etc
@@ -78,6 +81,11 @@ services:
           cpus: "3.0"
           memory: 12g
     environment:
+      # Fixes DataDir resolving against the container's working directory
+      # ("."), which otherwise misses the client-data volume mounted below
+      # and crashes on boot with "Failed to find map files for starting areas".
+      AC_DATA_DIR: "/azerothcore/env/dist/data"
+      AC_LOGS_DIR: "/azerothcore/env/dist/logs"
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
       AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
       AC_CHARACTER_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_characters"
