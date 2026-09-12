@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploys the wow-server-playerbots stack: clones the source pieces the compose
 # file expects on disk, generates a DB password if needed, optionally wires up
-# mod-llm-chatter, and brings the stack up.
+# mod-llm-chatter, brings the stack up, and installs a daily DB backup cron job.
 #
 # Safe to re-run: it never overwrites an existing checkout, .env, or
 # mod_llm_chatter.conf — only fills in what's missing.
@@ -396,6 +396,17 @@ PYEOF
   else
     echo "worldserver did not report ready within 5 minutes — skipping automatic account creation. Create one manually per the README." >&2
   fi
+fi
+
+# 10. Daily DB backup cron job — installed once, idempotently. Checked by
+#     exact line match against the current crontab so re-running deploy.sh
+#     never duplicates it, and a manually-edited schedule is left alone.
+CRON_LINE="0 4 * * * $SCRIPT_DIR/backup.sh >> $SCRIPT_DIR/backups/backup.log 2>&1"
+if crontab -l 2>/dev/null | grep -qF "$CRON_LINE"; then
+  log "Daily backup cron job already installed — leaving it as-is."
+else
+  (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
+  log "Installed daily backup cron job (04:00, logs to backups/backup.log)."
 fi
 
 log "Done. Tail logs with: docker logs -f ac-worldserver"
