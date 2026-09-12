@@ -294,16 +294,43 @@ elif [ "${#ADMIN_ACCOUNT_NAME}" -gt 17 ]; then
   echo "ADMIN_ACCOUNT_NAME '$ADMIN_ACCOUNT_NAME' is too long (AzerothCore's client limit is 17 characters) — skipping account creation. Pick a shorter name and re-run." >&2
 else
   log "Waiting for worldserver to finish starting up so it can accept console commands (can take a minute or two on first boot)..."
-  if timeout 300 docker compose logs -f ac-worldserver 2>&1 | grep -qm1 "worldserver-daemon) ready\.\.\."; then
+  # A `docker compose logs -f | grep -qm1` pipeline looks like it should return
+  # as soon as grep matches, but it doesn't: bash waits for every stage of a
+  # pipeline to exit, and `-f` (follow) never exits on its own once matched —
+  # it just idles until something kills it. That meant this unconditionally
+  # blocked for the full 5-minute timeout on every run, even when worldserver
+  # was ready in under a minute. Polling a plain (non-follow) `logs` call
+  # instead actually returns as soon as the line shows up.
+  WORLDSERVER_READY=0
+  SECONDS=0
+  while [ "$SECONDS" -lt 300 ]; do
+    if docker compose logs ac-worldserver 2>&1 | grep -q "worldserver-daemon) ready\.\.\."; then
+      WORLDSERVER_READY=1
+      break
+    fi
+    sleep 3
+  done
+  if [ "$WORLDSERVER_READY" -eq 1 ]; then
+    # Resolved via `docker compose ps -q` (scoped to this project/DEPLOY_DIR)
+    # rather than a hardcoded "ac-worldserver" — that string is this repo's
+    # default container_name, but a hardcoded `docker attach` bypasses
+    # project scoping entirely and would attach to a same-named container
+    # from a *different* deployment on the same host (silently running
+    # console commands against the wrong server) if one exists.
+    WORLDSERVER_CONTAINER="$(docker compose ps -q ac-worldserver)"
+    if [ -z "$WORLDSERVER_CONTAINER" ]; then
+      echo "Couldn't resolve the ac-worldserver container ID for this project — skipping automatic account creation. Create one manually per the README." >&2
+    else
     log "Creating game account '$ADMIN_ACCOUNT_NAME' and granting GM level..."
-    RESULT="$(ADMIN_NAME="$ADMIN_ACCOUNT_NAME" ADMIN_PASS="$ADMIN_ACCOUNT_PASSWORD" python3 - <<'PYEOF'
+    RESULT="$(ADMIN_NAME="$ADMIN_ACCOUNT_NAME" ADMIN_PASS="$ADMIN_ACCOUNT_PASSWORD" WS_CONTAINER="$WORLDSERVER_CONTAINER" python3 - <<'PYEOF'
 import os, pty, subprocess, select, time, sys
 
 name = os.environ["ADMIN_NAME"]
 pw = os.environ["ADMIN_PASS"]
+container = os.environ["WS_CONTAINER"]
 
 master, slave = pty.openpty()
-proc = subprocess.Popen(["docker", "attach", "ac-worldserver"], stdin=slave, stdout=slave, stderr=slave)
+proc = subprocess.Popen(["docker", "attach", container], stdin=slave, stdout=slave, stderr=slave)
 os.close(slave)
 
 def drain(t=2.5):
@@ -365,6 +392,7 @@ PYEOF
         echo "Couldn't confirm account creation via the console — check manually: docker attach ac-worldserver (detach with Ctrl-P Ctrl-Q, never Ctrl-C)" >&2
         ;;
     esac
+    fi
   else
     echo "worldserver did not report ready within 5 minutes — skipping automatic account creation. Create one manually per the README." >&2
   fi

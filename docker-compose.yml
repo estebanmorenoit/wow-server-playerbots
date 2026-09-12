@@ -10,7 +10,16 @@ services:
     networks:
       - ac-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-password}"]
+      # "-h 127.0.0.1" (not "localhost") is load-bearing: mysql clients treat
+      # the literal string "localhost" as "use the Unix socket", and MySQL's
+      # entrypoint briefly runs a temporary, init-only server that listens
+      # only on that socket (port 0, no TCP) before the real server starts on
+      # 3306. On a fresh volume, "-h localhost" pings that temp server and
+      # reports healthy ~2s before anything is actually listening on 3306,
+      # which raced ac-db-import straight into a refused connection on a
+      # from-scratch deploy. 127.0.0.1 forces TCP, which the temp server
+      # doesn't expose at all, so this can only pass against the real one.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${DB_ROOT_PASSWORD:-password}"]
       interval: 10s
       timeout: 5s
       retries: 10
