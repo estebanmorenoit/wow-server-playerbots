@@ -66,14 +66,17 @@ services:
     tty: true
     # Nothing capped this before — worldserver could (and did) take whatever
     # the host had, competing directly with the ~30 unrelated containers also
-    # running here. 3 of this host's 4 threads mirrors AC_MAP_UPDATE_THREADS
-    # below (leaves headroom for DB/auth/OS); memory has never gone past ~4.5GB
-    # even with far more bots, so 6g is slack, not a squeeze.
+    # running here. CPU is the scarce resource on this box (4 threads total,
+    # ~30 other containers), so 3 of those 4 threads mirrors
+    # AC_MAP_UPDATE_THREADS below and leaves headroom for DB/auth/OS. RAM
+    # isn't scarce here (host has ~19GB free at typical load) — 12g is well
+    # above any observed usage (peaked ~4.5GB even with 4x the bots), just a
+    # backstop against a genuine leak rather than a real constraint.
     deploy:
       resources:
         limits:
           cpus: "3.0"
-          memory: 6g
+          memory: 12g
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
       AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
