@@ -32,6 +32,14 @@
 #                     you can configure and start it later, see the README.
 #   LLM_API_KEY       Required unless LLM_PROVIDER=ollama. Never printed, never
 #                     written anywhere but the gitignored conf file below.
+#   LLM_MODEL         Override the model set for your provider (defaults to
+#                     each provider's tested recommendation — see the .dist
+#                     template). Required for ollama, since that depends on
+#                     whatever you've pulled locally.
+#   REALM_ADDRESS      Public/LAN address advertised to game clients (default:
+#                      auto-detected from this host's default route). Only
+#                      needed if auto-detection picks the wrong interface, or
+#                      you're behind NAT and need to advertise a public IP.
 #   ADMIN_ACCOUNT_NAME     Game account created on first deploy, promoted to GM
 #                          (default: admin). Set to an empty string to skip
 #                          account creation entirely. Only ever attempted once
@@ -125,15 +133,25 @@ else
   log "Core already present at $DEPLOY_DIR — leaving it as-is (not touching a running server's checkout)."
 fi
 
-# 2. mod-llm-chatter source (needed for its conf.dist template and the bridge's
-#    build context resolves this from GitHub directly, but ac-worldserver still
-#    mounts this directory for module .conf.dist discovery)
-if [ ! -d "$LLM_DIR/.git" ]; then
-  log "Cloning mod-llm-chatter into $LLM_DIR ..."
-  git clone https://github.com/Hokken/mod-llm-chatter.git "$LLM_DIR"
-else
-  log "mod-llm-chatter already present at $LLM_DIR — leaving it as-is."
-fi
+# 2. Module sources. The C++ side of all three is already baked into the
+#    prebuilt images, so these clones exist purely to supply each module's
+#    conf.dist template (ac-worldserver mounts modules/ for that) — but
+#    without them present, worldserver has nothing to generate playerbots.conf
+#    / Solocraft.conf from, which breaks bot behavior and has been known to
+#    crash the server outright. mod-llm-chatter's bridge also needs its own
+#    clone here to know what to build (see docker-compose.yml).
+clone_module() {
+  local dir="$1" url="$2" name="$3"
+  if [ ! -d "$dir/.git" ]; then
+    log "Cloning $name into $dir ..."
+    git clone "$url" "$dir"
+  else
+    log "$name already present at $dir — leaving it as-is."
+  fi
+}
+clone_module "$LLM_DIR" https://github.com/Hokken/mod-llm-chatter.git mod-llm-chatter
+clone_module "$DEPLOY_DIR/modules/mod-playerbots" https://github.com/mod-playerbots/mod-playerbots.git mod-playerbots
+clone_module "$DEPLOY_DIR/modules/mod-solocraft" https://github.com/azerothcore/mod-solocraft.git mod-solocraft
 
 # 3. Compose file
 cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
@@ -168,15 +186,38 @@ else
   log "$CONF_FILE already exists — leaving your settings as-is."
 fi
 
+# playerbots.conf and Solocraft.conf — same materialize-once pattern. The
+# per-service AC_AI_PLAYERBOT_* env vars in docker-compose.yml only override
+# a handful of keys; the .dist templates supply everything else the modules
+# actually need to register their config.
+materialize_conf() {
+  local dist="$1" dest="$2" label="$3"
+  if [ ! -f "$dest" ]; then
+    cp "$dist" "$dest"
+    log "Created $dest from the .dist template."
+  else
+    log "$dest already exists — leaving your $label settings as-is."
+  fi
+}
+materialize_conf "$DEPLOY_DIR/modules/mod-playerbots/conf/playerbots.conf.dist" "$CONF_DIR/playerbots.conf" playerbots
+materialize_conf "$DEPLOY_DIR/modules/mod-solocraft/conf/Solocraft.conf.dist" "$CONF_DIR/Solocraft.conf" solocraft
+
 # 6. Wire up the chosen LLM provider, if any
 START_BRIDGE=0
 if [ -n "${LLM_PROVIDER:-}" ]; then
+  # MODEL_DEFAULT matches the .dist template's own "tested" recommendation
+  # for each provider — without this, switching LLM_PROVIDER away from the
+  # template's default (anthropic) leaves LLMChatter.Model pointing at an
+  # Anthropic model ID while calling a different provider's API, which
+  # fails outright (e.g. 404s from Google when Model is still an Anthropic
+  # ID). Left empty for ollama since the right value depends entirely on
+  # which local models you've pulled — set LLM_MODEL yourself in that case.
   case "$LLM_PROVIDER" in
-    anthropic) KEY_FIELD="LLMChatter.Anthropic.ApiKey" ;;
-    openai)    KEY_FIELD="LLMChatter.OpenAI.ApiKey" ;;
-    google)    KEY_FIELD="LLMChatter.Google.ApiKey" ;;
-    openrouter) KEY_FIELD="LLMChatter.OpenRouter.ApiKey" ;;
-    ollama)    KEY_FIELD="" ;;
+    anthropic) KEY_FIELD="LLMChatter.Anthropic.ApiKey";  MODEL_DEFAULT="claude-haiku-4-5-20251001" ;;
+    openai)    KEY_FIELD="LLMChatter.OpenAI.ApiKey";     MODEL_DEFAULT="gpt-4o-mini" ;;
+    google)    KEY_FIELD="LLMChatter.Google.ApiKey";     MODEL_DEFAULT="gemini-3.1-flash-lite" ;;
+    openrouter) KEY_FIELD="LLMChatter.OpenRouter.ApiKey"; MODEL_DEFAULT="openai/gpt-4o-mini" ;;
+    ollama)    KEY_FIELD=""; MODEL_DEFAULT="" ;;
     *)
       echo "Unknown LLM_PROVIDER '$LLM_PROVIDER' (expected anthropic|openai|google|openrouter|ollama)" >&2
       exit 1
@@ -192,7 +233,11 @@ if [ -n "${LLM_PROVIDER:-}" ]; then
   if [ -n "$KEY_FIELD" ]; then
     sed -i "s#^${KEY_FIELD} = .*#${KEY_FIELD} = ${LLM_API_KEY}#" "$CONF_FILE"
   fi
-  log "Configured mod_llm_chatter.conf for provider '$LLM_PROVIDER'."
+  MODEL="${LLM_MODEL:-$MODEL_DEFAULT}"
+  if [ -n "$MODEL" ]; then
+    sed -i "s#^LLMChatter\.Model = .*#LLMChatter.Model = ${MODEL}#" "$CONF_FILE"
+  fi
+  log "Configured mod_llm_chatter.conf for provider '$LLM_PROVIDER'${MODEL:+ (model: $MODEL)}."
   START_BRIDGE=1
 else
   log "LLM_PROVIDER not set — leaving mod-llm-chatter unconfigured for now (server runs fine without it)."
@@ -209,7 +254,23 @@ else
   docker compose up -d
 fi
 
-# 8. Create a test game account, once. Uses a pty-wrapped `docker attach`
+# 8. Advertise the right address to game clients. db-import seeds the realm
+# row with 127.0.0.1, which only works for a client on this exact machine —
+# anyone connecting from another device gets stuck at realm select because
+# the world-server handoff then tries to reach 127.0.0.1 on their machine,
+# not this host. authserver re-reads this table live, so no restart needed.
+REALM_ADDRESS="${REALM_ADDRESS:-$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')}"
+REALM_ADDRESS="${REALM_ADDRESS:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+if [ -n "$REALM_ADDRESS" ]; then
+  docker compose exec -T ac-database mysql -uroot -p"$DB_ROOT_PASSWORD" acore_auth \
+    -e "UPDATE realmlist SET address='$REALM_ADDRESS' WHERE id=1;" 2>/dev/null \
+    && log "Realm now advertises $REALM_ADDRESS:8085 to game clients." \
+    || echo "Couldn't set the realm address automatically — set it manually: UPDATE realmlist SET address='<your-ip>' WHERE id=1; (in acore_auth)" >&2
+else
+  echo "Couldn't auto-detect this host's address — set REALM_ADDRESS and re-run, or update the realmlist table manually." >&2
+fi
+
+# 9. Create a test game account, once. Uses a pty-wrapped `docker attach`
 # since the worldserver console needs a real TTY (plain piped input is
 # refused). Only attempted once per checkout, tracked by a marker file, so
 # re-running deploy.sh never tries to recreate or erroneously fails on it.

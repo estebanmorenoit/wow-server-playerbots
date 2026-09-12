@@ -31,7 +31,9 @@ All four are built from the same `apps/docker/Dockerfile` in the AzerothCore pla
 
 ## Running it
 
-[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and `mod-llm-chatter` next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), brings the stack up in the right order, and creates a game login account once worldserver is ready.
+[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and all three modules next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), materializes each module's `.conf` from its `.dist` template, brings the stack up in the right order, points the realm at this host's address, and creates a game login account once worldserver is ready.
+
+The C++ side of `mod-playerbots` and `mod-solocraft` is already baked into the prebuilt images, but deploy.sh still clones both — without their `conf/*.conf.dist` templates present on disk, `playerbots.conf`/`Solocraft.conf` never get generated and worldserver runs with incomplete bot config (this has crashed the server outright on a prior deploy).
 
 **Without LLM-driven bot chat:**
 ```bash
@@ -42,9 +44,19 @@ All four are built from the same `apps/docker/Dockerfile` in the AzerothCore pla
 ```bash
 LLM_PROVIDER=google LLM_API_KEY=<your Gemini key> ./deploy.sh
 ```
-`LLM_PROVIDER` is one of `anthropic`, `openai`, `google`, `openrouter`, or `ollama` (`ollama` needs no key). See the script's header comment for all options, including overriding `DEPLOY_DIR` or `DB_ROOT_PASSWORD`.
+`LLM_PROVIDER` is one of `anthropic`, `openai`, `google`, `openrouter`, or `ollama` (`ollama` needs no key). `deploy.sh` also sets `LLMChatter.Model` to that provider's tested default (e.g. `gemini-3.1-flash-lite` for `google`) — the `.dist` template ships with an Anthropic model ID regardless of provider, so switching providers without also fixing the model causes API calls to 404. Override with `LLM_MODEL` (required for `ollama`, since that depends on what you've pulled locally). See the script's header comment for all options, including overriding `DEPLOY_DIR` or `DB_ROOT_PASSWORD`.
 
 Didn't set a provider the first time? Re-run `deploy.sh` later with `LLM_PROVIDER`/`LLM_API_KEY` set — it'll fill those two fields into your existing `mod_llm_chatter.conf` and start the bridge, without touching anything else you've since customized in that file (`docker compose --profile llm-chatter up -d` also works directly if you'd rather edit the conf by hand).
+
+### Realm address
+
+`deploy.sh` points the realm at this host's auto-detected LAN address (via its default route) so remote clients can actually complete login — the database's default, `127.0.0.1`, only works for a client running on this exact machine. Everyone else gets stuck at realm select: auth succeeds, but the world-server handoff then tries to reach `127.0.0.1` on *their* machine and fails.
+
+Behind NAT, or auto-detection picks the wrong interface (multiple NICs, VPNs, etc.)? Override it:
+```bash
+REALM_ADDRESS=<your public or LAN IP> ./deploy.sh
+```
+This re-runs on every `deploy.sh` invocation (not gated by a marker), so it stays correct if the host's IP changes. No restart needed either way — authserver re-reads the `realmlist` table live.
 
 ### Login account
 
