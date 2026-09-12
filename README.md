@@ -176,7 +176,7 @@ The Docker images are portable — the state and secrets are not, and need to mo
    docker exec -i ac-database mysql -u root -p"$DB_ROOT_PASSWORD" < wow-server-backup.sql
    ```
 3. **Copy secrets manually, out-of-band** (SCP, not git): `env/dist/etc/modules/mod_llm_chatter.conf` (has your real LLM API key) and the `DB_ROOT_PASSWORD` you're actually using — neither belongs in this repo.
-4. **Re-check bot count against the new host's core count.** On the original 4-core box, 100 bots used roughly one full core; a more powerful NUC has headroom to raise `AC_AI_PLAYERBOT_MAX_RANDOM_BOTS` (and could safely raise `AC_AI_PLAYERBOT_ITERATIONS_PER_TICK` back toward the core default of 10 for slightly sharper bot behavior) if you want a denser world.
+4. **Re-check bot count against the new host's core count.** On the original 4-core box (shared with ~30 unrelated containers), 75 random bots at `AC_AI_PLAYERBOT_ITERATIONS_PER_TICK=6` already used ~2 of those cores — that's the number the `deploy.resources.limits: cpus: "3.0"` cap on `ac-worldserver` was sized around. A more powerful NUC has headroom to raise `AC_AI_PLAYERBOT_MAX_RANDOM_BOTS` (and could safely raise `AC_AI_PLAYERBOT_ITERATIONS_PER_TICK` back toward the core default of 10 for slightly sharper bot behavior) if you want a denser world — just raise the `cpus`/`memory` limits above to match, and remember mod-playerbots auto-provisions however many `RNDBOT` accounts `MaxRandomBots` needs (`AiPlayerbot.RandomBotAccountCount = 0` in `playerbots.conf`), so there's no separate account-count step.
 5. **Open port 3724** (and 8085 if you want direct world-server access) in the new host's firewall/router, then update `realmlist.wtf` on any client to the new address.
 
 ## Commanding bots in-game

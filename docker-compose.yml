@@ -3,6 +3,11 @@ services:
     container_name: ac-database
     image: mysql:8.4
     restart: unless-stopped
+    # Default innodb_buffer_pool_size (128MB) is smaller than this server's
+    # actual data (~550MB across all 4 databases), forcing MySQL to evict and
+    # re-read from disk on a host that has RAM to spare. 1G comfortably fits
+    # the whole dataset in memory.
+    command: --innodb-buffer-pool-size=1073741824
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-password}
     volumes:
