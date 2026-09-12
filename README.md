@@ -36,7 +36,23 @@ docker compose up -d
 
 The init containers (`ac-db-import`, `ac-client-data-init`) run once and exit; `ac-worldserver` and `ac-authserver` wait on them via `depends_on` health/completion conditions before starting.
 
-Connect with a **3.3.5a (12340)** WotLK client, with `realmlist.wtf` pointed at this server's address on port 3724.
+Connect with a **3.3.5a (12340)** WotLK client, pointed at this server's address on port 3724 (see below).
+
+## Pointing the client at this server
+
+The WotLK client reads which realm to connect to from a text file called `realmlist.wtf`.
+
+1. Find it inside your WoW 3.3.5a client install:
+   ```
+   <WoW install folder>/Data/enUS/realmlist.wtf
+   ```
+   (use the folder matching your client locale, e.g. `enGB`, `deDE`, etc. — most English clients use `enUS`)
+2. Open it in a text editor and replace its contents with:
+   ```
+   set realmlist <YOUR_SERVER_IP>
+   ```
+   replacing `<YOUR_SERVER_IP>` with the IP address or hostname where `ac-authserver` is reachable (port 3724 must be open on that host).
+3. Save the file and launch the client — it will authenticate against port 3724 and hand off to the world server on connect.
 
 ## Playerbot configuration
 
