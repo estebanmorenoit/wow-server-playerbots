@@ -97,16 +97,25 @@ services:
       - ac-network
 
   # Python bridge for mod-llm-chatter: polls the DB for bot chat requests and calls
-  # out to an LLM provider (Anthropic/OpenAI/Google/OpenRouter/Ollama). Builds from
-  # the Dockerfile shipped in modules/mod-llm-chatter/tools/, which bakes its Python
-  # deps in at build time instead of installing them on every container start. Needs
-  # a real API key in env/dist/etc/modules/mod_llm_chatter.conf (copied from the
-  # .dist template — never commit that file with a real key in it, and never bake
-  # it into the image; it stays bind-mounted at runtime).
+  # out to an LLM provider (Anthropic/OpenAI/Google/OpenRouter/Ollama). Builds
+  # straight from mod-llm-chatter's tools/ directory on GitHub (no local clone
+  # needed for this piece), baking Python deps in at image-build time instead of
+  # installing them on every container start. Needs a real API key in
+  # env/dist/etc/modules/mod_llm_chatter.conf (copied from the .dist template —
+  # never commit that file with a real key in it, and never bake it into the
+  # image; it stays bind-mounted at runtime).
   ac-llm-chatter-bridge:
     container_name: ac-llm-chatter-bridge
     build:
-      context: ./modules/mod-llm-chatter/tools
+      context: https://github.com/Hokken/mod-llm-chatter.git#master:tools
+      dockerfile_inline: |
+        FROM python:3.11-slim
+        WORKDIR /app
+        COPY requirements.txt .
+        RUN pip install --no-cache-dir -r requirements.txt
+        COPY . .
+        ENV PYTHONUNBUFFERED=1
+        CMD ["python", "llm_chatter_bridge.py", "--config", "/config/mod_llm_chatter.conf"]
     networks:
       - ac-network
     volumes:

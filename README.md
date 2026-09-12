@@ -27,7 +27,7 @@ The C++ side (core + all three modules) is baked into these images — no build 
 
 All four are built from the same `apps/docker/Dockerfile` in the AzerothCore playerbots fork, using a different `target` per service.
 
-**Exception**: mod-llm-chatter's Python bridge (`ac-llm-chatter-bridge` below) isn't one of the four prebuilt Hub images above, since it's a separate Python process from the C++ world server. It does build its own image locally, though — from the `Dockerfile` shipped in `mod-llm-chatter/tools/`, which bakes its Python dependencies in at build time (`docker compose build` / first `docker compose up`) instead of installing them on every container start. You still need a local clone of `mod-llm-chatter` for that Dockerfile and source; see below.
+**Exception**: mod-llm-chatter's Python bridge (`ac-llm-chatter-bridge` below) isn't one of the four prebuilt Hub images above, since it's a separate Python process from the C++ world server. Its build pulls source straight from `Hokken/mod-llm-chatter` on GitHub via a git build context — no local clone needed for this piece. (You'll likely still have `modules/mod-llm-chatter` cloned anyway per "Get the pieces" below, since `ac-worldserver` mounts the whole `modules/` tree for its `.conf.dist` templates — that's unrelated to the bridge's build.)
 
 ## Running it
 
