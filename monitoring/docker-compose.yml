@@ -42,6 +42,13 @@ services:
     image: gcr.io/cadvisor/cadvisor:latest
     restart: unless-stopped
     privileged: true
+    # Default housekeeping_interval (1s) plus tracking every systemd cgroup
+    # slice on the host (not just Docker containers) measured at 70-125% CPU
+    # on this 2-core (4-thread) host. docker_only=true skips non-Docker
+    # cgroups entirely; 15s matches our Prometheus scrape_interval anyway.
+    command:
+      - '--housekeeping_interval=15s'
+      - '--docker_only=true'
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
