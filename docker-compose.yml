@@ -108,6 +108,10 @@ services:
       # chat when their window opens — doesn't affect whether events run, only
       # whether that's announced. Off by default in worldserver.conf.
       AC_EVENT_ANNOUNCE: "1"
+      # Bots also buy from the AH, not just sell — so anything you list has
+      # real bidders. BidAgainstPlayers stays at its default (false): bots
+      # still bid, just won't escalate a bidding war against you specifically.
+      AC_AUCTION_HOUSE_BOT_BUYER_ENABLED: "true"
       AC_AI_PLAYERBOT_RANDOM_BOT_AUTOLOGIN: "1"
       # Random bots are ambient world population (NPCs wandering zones), not
       # your party — those are recruited separately in-game and aren't capped
