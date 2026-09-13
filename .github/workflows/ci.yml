@@ -1,0 +1,28 @@
+name: ci
+# Lints and validates this repo's own deploy tooling — deploy.sh/backup.sh
+# and both compose files — on every push and PR. Doesn't touch the actual
+# game server or the AzerothCore fork's own build (esteban-custom-build.yml
+# over there); this is purely "does the stuff in *this* repo still make
+# sense" before it ever reaches a real host.
+on:
+  push:
+  pull_request:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # shellcheck ships preinstalled on GitHub's ubuntu-latest runners —
+      # no extra action/dependency needed for something this small.
+      - name: shellcheck deploy.sh and backup.sh
+        run: shellcheck deploy.sh backup.sh
+
+  compose-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate main docker-compose.yml
+        run: docker compose -f docker-compose.yml config -q
+      - name: Validate monitoring/docker-compose.yml
+        run: docker compose -f monitoring/docker-compose.yml config -q
