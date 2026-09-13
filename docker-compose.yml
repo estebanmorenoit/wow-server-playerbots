@@ -31,7 +31,7 @@ services:
 
   ac-client-data-init:
     container_name: ac-client-data-init
-    image: estebanmorenoit/ac-wotlk-client-data-playerbots:quest-loot-fix-test
+    image: estebanmorenoit/ac-wotlk-client-data-playerbots:instance-reset-test
     volumes:
       - ac-client-data:/azerothcore/env/dist/data
     networks:
@@ -41,7 +41,7 @@ services:
   # ac-worldserver/ac-authserver; exits when done (see depends_on below).
   ac-db-import:
     container_name: ac-db-import
-    image: estebanmorenoit/ac-wotlk-db-import-playerbots:quest-loot-fix-test
+    image: estebanmorenoit/ac-wotlk-db-import-playerbots:instance-reset-test
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
       AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
@@ -57,7 +57,7 @@ services:
 
   ac-authserver:
     container_name: ac-authserver
-    image: estebanmorenoit/ac-wotlk-authserver-playerbots:quest-loot-fix-test
+    image: estebanmorenoit/ac-wotlk-authserver-playerbots:instance-reset-test
     restart: unless-stopped
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
@@ -67,14 +67,14 @@ services:
     depends_on:
       ac-db-import:
         condition: service_completed_successfully
-    ports:
-      - "3724:3724"
+    # No host port published — wake-proxy owns the real public 3724 and
+    # reaches this container by its service name over ac-network.
     networks:
       - ac-network
 
   ac-worldserver:
     container_name: ac-worldserver
-    image: estebanmorenoit/ac-wotlk-worldserver-playerbots:quest-loot-fix-test
+    image: estebanmorenoit/ac-wotlk-worldserver-playerbots:instance-reset-test
     restart: unless-stopped
     stdin_open: true
     tty: true
@@ -121,6 +121,13 @@ services:
       # Dropped back down given this box also runs ~30 unrelated containers.
       AC_AI_PLAYERBOT_MIN_RANDOM_BOTS: "75"
       AC_AI_PLAYERBOT_MAX_RANDOM_BOTS: "75"
+      # Idles all random bots out when no real player is connected instead of
+      # simulating 75 bots' AI/pathing 24/7 — this alone was measured pinning
+      # worldserver at ~193% CPU on this 4-thread host even with nobody
+      # playing, which is what was driving the NUC's fan noise at rest.
+      # Bots re-login 30s after a real player connects, log out 300s after
+      # the last one disconnects — both stock module defaults.
+      AC_AI_PLAYERBOT_DISABLED_WITHOUT_REAL_PLAYER: "1"
       AC_AI_PLAYERBOT_SYNC_LEVEL_WITH_PLAYERS: "1"
       AC_AI_PLAYERBOT_RANDOM_BOT_CONCENTRATE_IN_PLAYER_ZONE: "1"
       # Greet disabled: mod-llm-chatter replaces built-in bot chat (see below).
@@ -153,8 +160,9 @@ services:
       ac-client-data-init:
         condition: service_completed_successfully
     ports:
+      # 7878 (SOAP admin console) — admin tooling, not client-facing.
       - "7878:7878"
-      - "8085:8085"
+      # 8085 (world) is NOT published here — wake-proxy owns it.
     networks:
       - ac-network
 
@@ -194,6 +202,36 @@ services:
         condition: service_healthy
       ac-db-import:
         condition: service_completed_successfully
+
+  # Always-on TCP relay for the two client-facing ports (3724 auth, 8085
+  # world) plus an idle-shutdown watcher — the only game-stack service that
+  # never gets stopped. Lets the whole stack sit fully stopped between play
+  # sessions (quiet host, no idle CPU/heat) while still being reachable:
+  # the first WoW client connection attempt transparently boots everything
+  # else, and it auto-stops the rest again 15 minutes after everyone
+  # disconnects. See wake-proxy/wake_proxy.py for the full design notes.
+  #
+  # Needs the host's Docker socket (to run `docker compose` against sibling
+  # containers — this is socket-mounted "docker outside of docker", not
+  # real DinD) and this same directory mounted at the IDENTICAL absolute
+  # host path, because this compose file's relative bind mounts (./env/...
+  # etc.) get resolved against that path and then applied by the HOST's
+  # dockerd — a mismatched path here would silently break those mounts the
+  # next time this container starts the stack.
+  wake-proxy:
+    container_name: ac-wake-proxy
+    build: ./wake-proxy
+    restart: unless-stopped
+    environment:
+      DB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:-password}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/home/esteban/azerothcore-playerbots:ro
+    ports:
+      - "3724:3724"
+      - "8085:8085"
+    networks:
+      - ac-network
 
 networks:
   ac-network:

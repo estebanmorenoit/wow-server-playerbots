@@ -288,6 +288,19 @@ gunzip -c backups/<file>.sql.gz | docker exec -i ac-database mysql -u root -p"$D
 
 These are local backups only — if the disk itself is lost, they're gone too. Consider copying `backups/` off-host periodically for real disaster recovery.
 
+### Auto-sleep / wake-on-connect
+
+The `wake-proxy` service ([`wake-proxy/wake_proxy.py`](./wake-proxy/wake_proxy.py)) lets the whole game stack sit fully stopped between play sessions — no idle CPU/heat/fan noise from `ac-worldserver` running an empty world 24/7 — while staying reachable on demand:
+
+- **Wake:** it's the only service that's always running, holding the real public `3724`/`8085` ports. The moment a WoW client tries to connect, if the real backend isn't up, it runs `docker compose up -d` and holds the connection until the backend is ready (~60-70s measured cold-boot time), then relays transparently. Once the backend is warm, it's a pure passthrough with no overhead.
+- **Sleep:** it also watches `characters.online` in the database. 15 minutes after the last real player disconnects (not AFK — this is disconnect-based, since there's no reliable "idle but connected" signal without extra hooks), it stops `ac-worldserver`/`ac-authserver`/`ac-database`/`ac-llm-chatter-bridge` — itself excluded, so it's always there for the next wake.
+
+**Known limitation:** because cold boot takes ~60-70s and the WoW 3.3.5a client's own connection timeout is shorter than that, your *first* connection attempt after the stack has slept will likely show a connection error while it boots in the background. Just retry a minute later — the client will connect immediately from then on. There's no clean fix for this without spoofing the auth protocol itself, which isn't worth the fragility for a once-per-session inconvenience.
+
+**Fixed bug (see [Known issues](#known-issues)):** an earlier version disconnected the client specifically at "Enter World" — `socket.create_connection(..., timeout=BACKEND_CONNECT_TIMEOUT)`'s timeout stays active on the returned socket for every subsequent `recv()`, not just the connection attempt, so any >2s gap in the backend's data stream (easily hit by the burst of world state sent on entering, under this host's CPU constraints) raised `socket.timeout` — an `OSError` subclass — which the relay's `except OSError: pass` treated as a dead connection and tore down both sockets. Quick exchanges (auth, character list) stayed under 2s, which is why only world-entry broke. Fixed with an explicit `backend.settimeout(None)` after connecting.
+
+It needs the host's Docker socket mounted to control sibling containers (`docker compose` runs *inside* the `wake-proxy` container, against the host's Docker daemon — "docker outside of docker", not real DinD) and this directory bind-mounted at the exact same absolute path it lives at on the host, since this compose file's relative volume mounts get resolved against that path and then applied by the *host's* dockerd — a mismatched path would silently break `ac-authserver`/`ac-worldserver`'s config/log mounts the next time `wake-proxy` starts them. Both are handled automatically by the `wake-proxy` service definition in `docker-compose.yml` — nothing extra to set up on a fresh deploy.
+
 ### Monitoring
 
 [`monitoring/docker-compose.yml`](./monitoring/docker-compose.yml) is a standalone Prometheus + Grafana stack, independent of the game stack:
@@ -322,6 +335,8 @@ The Docker images are portable — the state and secrets are not:
 5. **Open port 3724** (and 8085 for direct world-server access) in the new host's firewall/router, then update `realmlist.wtf` on any client.
 
 ## Known issues
+
+**wake-proxy disconnected clients at "Enter World" (fixed):** [`wake-proxy/wake_proxy.py`](./wake-proxy/wake_proxy.py)'s relay connected to the backend with `socket.create_connection(..., timeout=BACKEND_CONNECT_TIMEOUT)` — that timeout is meant only for the connection attempt, but Python leaves it active on the returned socket for every subsequent call. Any gap longer than `BACKEND_CONNECT_TIMEOUT` (2s) between packets during relaying raised `socket.timeout` (an `OSError` subclass), which the relay's `except OSError: pass` silently treated as a dead connection, tearing down both sockets. Auth and character-list exchanges are quick enough to dodge this; the data burst on actually entering the world reliably wasn't, especially under this host's CPU constraints — so every login got through character select and died right at "Enter World." Reproduced across two different worldserver image tags with the proxy as the only common factor, confirming it wasn't a build issue. Fixed with an explicit `backend.settimeout(None)` right after connecting, before the relay threads start.
 
 **mod-llm-chatter compile bug (fixed locally):** as of the commit this was built against, `LLMChatterShared.cpp`'s `SendPartyMessageInstant` calls `ChatHandler::BuildChatPacket()` with an argument order from an older AzerothCore signature, failing to compile (`fatal error: no matching function for call to 'BuildChatPacket'`). Fix (matches the pattern used elsewhere in the module and core, e.g. `Player.cpp`'s `Say`/`Yell`):
 
