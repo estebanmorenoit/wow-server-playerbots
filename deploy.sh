@@ -80,6 +80,7 @@ PROGRESSION_DIR="$DEPLOY_DIR/modules/mod-individual-progression"
 NPC_BUFFER_DIR="$DEPLOY_DIR/modules/mod-npc-buffer"
 CFBG_DIR="$DEPLOY_DIR/modules/mod-cfbg"
 ACCOUNT_ACHIEVEMENTS_DIR="$DEPLOY_DIR/modules/mod-account-achievements"
+INSTANCE_RESET_DIR="$DEPLOY_DIR/modules/mod-instance-reset"
 
 log() { echo "==> $*"; }
 
@@ -164,6 +165,7 @@ clone_module "$PROGRESSION_DIR" https://github.com/ZhengPeiRu21/mod-individual-p
 clone_module "$NPC_BUFFER_DIR" https://github.com/azerothcore/mod-npc-buffer.git mod-npc-buffer
 clone_module "$CFBG_DIR" https://github.com/azerothcore/mod-cfbg.git mod-cfbg
 clone_module "$ACCOUNT_ACHIEVEMENTS_DIR" https://github.com/azerothcore/mod-account-achievements.git mod-account-achievements
+clone_module "$INSTANCE_RESET_DIR" https://github.com/azerothcore/mod-instance-reset.git mod-instance-reset
 
 # 5. Compose file
 cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
@@ -256,6 +258,17 @@ if [ ! -f "$ACHIEVEMENTS_CONF" ]; then
   log "Created $ACHIEVEMENTS_CONF from the .dist template."
 else
   log "$ACHIEVEMENTS_CONF already exists — leaving your settings as-is."
+fi
+
+# instance-reset.conf: ships enabled and free by default (instanceReset.Enable
+# = true, TransactionType = 0) — the NPC (entry 300000) just needs spawning
+# in-game (see README).
+INSTANCE_RESET_CONF="$CONF_DIR/instance-reset.conf"
+if [ ! -f "$INSTANCE_RESET_CONF" ]; then
+  cp "$INSTANCE_RESET_DIR/conf/instance-reset.conf.dist" "$INSTANCE_RESET_CONF"
+  log "Created $INSTANCE_RESET_CONF from the .dist template."
+else
+  log "$INSTANCE_RESET_CONF already exists — leaving your settings as-is."
 fi
 
 # mod_llm_chatter.conf — created once from the .dist template, never

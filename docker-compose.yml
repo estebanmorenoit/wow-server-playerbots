@@ -31,7 +31,7 @@ services:
 
   ac-client-data-init:
     container_name: ac-client-data-init
-    image: estebanmorenoit/ac-wotlk-client-data-playerbots:cfbg-achievements-test
+    image: estebanmorenoit/ac-wotlk-client-data-playerbots:instance-reset-test
     volumes:
       - ac-client-data:/azerothcore/env/dist/data
     networks:
@@ -41,7 +41,7 @@ services:
   # ac-worldserver/ac-authserver; exits when done (see depends_on below).
   ac-db-import:
     container_name: ac-db-import
-    image: estebanmorenoit/ac-wotlk-db-import-playerbots:cfbg-achievements-test
+    image: estebanmorenoit/ac-wotlk-db-import-playerbots:instance-reset-test
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
       AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
@@ -57,7 +57,7 @@ services:
 
   ac-authserver:
     container_name: ac-authserver
-    image: estebanmorenoit/ac-wotlk-authserver-playerbots:cfbg-achievements-test
+    image: estebanmorenoit/ac-wotlk-authserver-playerbots:instance-reset-test
     restart: unless-stopped
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
@@ -74,7 +74,7 @@ services:
 
   ac-worldserver:
     container_name: ac-worldserver
-    image: estebanmorenoit/ac-wotlk-worldserver-playerbots:cfbg-achievements-test
+    image: estebanmorenoit/ac-wotlk-worldserver-playerbots:instance-reset-test
     restart: unless-stopped
     stdin_open: true
     tty: true

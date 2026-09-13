@@ -1,6 +1,6 @@
 # wow-server-playerbots
 
-Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) with the [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots), [mod-solocraft](https://github.com/azerothcore/mod-solocraft), [mod-llm-chatter](https://github.com/Hokken/mod-llm-chatter), [mod-ah-bot](https://github.com/NathanHandley/mod-ah-bot-plus), [mod-individual-progression](https://github.com/ZhengPeiRu21/mod-individual-progression), and [mod-npc-buffer](https://github.com/azerothcore/mod-npc-buffer) modules.
+Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) with the [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots), [mod-solocraft](https://github.com/azerothcore/mod-solocraft), [mod-llm-chatter](https://github.com/Hokken/mod-llm-chatter), [mod-ah-bot](https://github.com/NathanHandley/mod-ah-bot-plus), [mod-individual-progression](https://github.com/ZhengPeiRu21/mod-individual-progression), [mod-npc-buffer](https://github.com/azerothcore/mod-npc-buffer), [mod-cfbg](https://github.com/azerothcore/mod-cfbg), [mod-account-achievements](https://github.com/azerothcore/mod-account-achievements), and [mod-instance-reset](https://github.com/azerothcore/mod-instance-reset) modules.
 
 Not affiliated with Blizzard Entertainment. For personal/private-server use.
 
@@ -16,29 +16,30 @@ Not affiliated with Blizzard Entertainment. For personal/private-server use.
   - [mod-npc-buffer](https://github.com/azerothcore/mod-npc-buffer) — a one-click buff NPC, since solo play means no group to hand out the usual pre-pull buffs — see [NPC Buffer](#npc-buffer) below to spawn it
   - [mod-cfbg](https://github.com/azerothcore/mod-cfbg) — pools both factions into the same battleground instance, so the fixed random-bot population actually fills PvP queues instead of waiting on one faction alone
   - [mod-account-achievements](https://github.com/azerothcore/mod-account-achievements) — shares achievement progress across every character on your account, matching retail behavior since Legion
+  - [mod-instance-reset](https://github.com/azerothcore/mod-instance-reset) — talk to an NPC to reset your own dungeon/raid lockouts on demand instead of waiting out the timer — see [Instance Reset](#instance-reset) below to spawn it
 - **Database**: MySQL 8.4 (official `mysql:8.4` image — not customized)
 - **Orchestration**: Docker Compose
 
 ## Prebuilt images
 
-The C++ side (core + all eight modules) is baked into these images — no build toolchain needed to run the server:
+The C++ side (core + all nine modules) is baked into these images — no build toolchain needed to run the server:
 
 | Image | Purpose |
 |---|---|
-| [`estebanmorenoit/ac-wotlk-worldserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots) | World server (game logic), with all eight modules built in |
+| [`estebanmorenoit/ac-wotlk-worldserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots) | World server (game logic), with all nine modules built in |
 | [`estebanmorenoit/ac-wotlk-authserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-authserver-playerbots) | Auth/login server (port 3724) |
 | [`estebanmorenoit/ac-wotlk-db-import-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-db-import-playerbots) | One-shot DB bootstrap/migration (run before the servers) |
 | [`estebanmorenoit/ac-wotlk-client-data-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-client-data-playerbots) | One-shot client data extraction (maps/vmaps/mmaps/dbc) |
 
-All four images are built from the same `apps/docker/Dockerfile`, using a different `target` per service — but from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow (`esteban-custom-build.yml`, manual `workflow_dispatch` trigger), not the upstream project's own CI. That workflow checks out all eight modules explicitly (`modules/*` is gitignored in the core repo by design — see its `modules/CMakeLists.txt` for the generic auto-discovery mechanism modules rely on) and patches a known upstream compile bug in mod-llm-chatter before building. Images currently deployed here use the `:cfbg-achievements-test` tag rather than `:master`, so `:npc-buffer-test`, `:progression-test`, `:ahbot-test`, and the original pre-mod images stay available as known-good fallbacks — see `docker-compose.yml`.
+All four images are built from the same `apps/docker/Dockerfile`, using a different `target` per service — but from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow (`esteban-custom-build.yml`, manual `workflow_dispatch` trigger), not the upstream project's own CI. That workflow checks out all nine modules explicitly (`modules/*` is gitignored in the core repo by design — see its `modules/CMakeLists.txt` for the generic auto-discovery mechanism modules rely on) and patches a known upstream compile bug in mod-llm-chatter before building. Images currently deployed here use the `:instance-reset-test` tag rather than `:master`, so `:cfbg-achievements-test`, `:npc-buffer-test`, `:progression-test`, `:ahbot-test`, and the original pre-mod images stay available as known-good fallbacks — see `docker-compose.yml`.
 
 **Exception**: mod-llm-chatter's Python bridge (`ac-llm-chatter-bridge` below) isn't one of the four prebuilt Hub images above, since it's a separate Python process from the C++ world server. Its build pulls source straight from `Hokken/mod-llm-chatter` on GitHub via a git build context — no local clone needed for this piece. (`deploy.sh` below still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for its `.conf.dist` templates — that's unrelated to the bridge's build.)
 
 ## Running it
 
-[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and all eight modules next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), materializes each module's `.conf` from its `.dist` template, brings the stack up in the right order, points the realm at this host's address, and creates a game login account once worldserver is ready.
+[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and all nine modules next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), materializes each module's `.conf` from its `.dist` template, brings the stack up in the right order, points the realm at this host's address, and creates a game login account once worldserver is ready.
 
-The C++ side of `mod-playerbots`, `mod-solocraft`, `mod-ah-bot`, `mod-individual-progression`, `mod-npc-buffer`, `mod-cfbg`, and `mod-account-achievements` is already baked into the prebuilt images, but deploy.sh still clones all seven — without their `conf/*.conf.dist` templates present on disk, `playerbots.conf`/`Solocraft.conf`/`mod_ahbot.conf`/`individualProgression.conf`/`npc_buffer.conf`/`CFBG.conf`/`mod_achievements.conf` never get generated and worldserver runs with incomplete config (missing `playerbots.conf`/`Solocraft.conf` has crashed the server outright on a prior deploy).
+The C++ side of `mod-playerbots`, `mod-solocraft`, `mod-ah-bot`, `mod-individual-progression`, `mod-npc-buffer`, `mod-cfbg`, `mod-account-achievements`, and `mod-instance-reset` is already baked into the prebuilt images, but deploy.sh still clones all eight — without their `conf/*.conf.dist` templates present on disk, `playerbots.conf`/`Solocraft.conf`/`mod_ahbot.conf`/`individualProgression.conf`/`npc_buffer.conf`/`CFBG.conf`/`mod_achievements.conf`/`instance-reset.conf` never get generated and worldserver runs with incomplete config (missing `playerbots.conf`/`Solocraft.conf` has crashed the server outright on a prior deploy).
 
 **Without LLM-driven bot chat:**
 ```bash
@@ -163,6 +164,15 @@ Notes:
 2. `.npc add 601016` to spawn it at your current location.
 
 Configurable in `env/dist/etc/modules/npc_buffer.conf` — spell list (`Buff.Spells`), level-scaling (`Buff.ByLevel`/`Buff.MaxLevel`), and flavor text/emotes.
+
+## Instance Reset
+
+`mod-instance-reset` adds an NPC (entry `300000`) you talk to reset your own dungeon/raid lockouts on demand, instead of waiting out the timer — relevant here since solo play means no group is ever waiting on you to keep the old lockout either. Ships **enabled and free** (`instanceReset.Enable = true`, `instanceReset.TransactionType = 0`), resets all difficulties by default (`instanceReset.NormalModeOnly = false`). Same activation pattern as the buffer NPC — only the creature template is added, not a spawn:
+
+1. `.gm on`, walk to wherever you want it.
+2. `.npc add 300000` to spawn it at your current location.
+
+Configurable in `env/dist/etc/modules/instance-reset.conf` — `instanceReset.TransactionType` can charge money and/or a token per reset (1/2/3) instead of free (0) if you'd rather it not be completely free.
 
 ## GM commands reference (this build)
 
