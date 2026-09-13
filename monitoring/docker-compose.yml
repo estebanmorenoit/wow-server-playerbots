@@ -1,0 +1,77 @@
+# Standalone monitoring stack for this host + the WoW containers — separate
+# from the game stack's own docker-compose.yml so it can be started/stopped
+# independently and doesn't need to touch the existing homelab reverse proxy
+# in /opt/docker. Grafana is exposed directly on a host port instead.
+services:
+  prometheus:
+    container_name: monitoring-prometheus
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+
+  # Host-level metrics: CPU, memory, disk, load, network — the same numbers
+  # `uptime`/`free`/`df` show, but recorded over time instead of one snapshot.
+  node-exporter:
+    container_name: monitoring-node-exporter
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - monitoring
+
+  # Per-container metrics for every container on this host (ac-worldserver,
+  # ac-database, the whole media stack, everything) — what docker stats shows,
+  # recorded over time instead of one-off snapshots.
+  cadvisor:
+    container_name: monitoring-cadvisor
+    image: gcr.io/cadvisor/cadvisor:latest
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - monitoring
+
+  grafana:
+    container_name: monitoring-grafana
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    environment:
+      # Placeholder for local access — change if this ever becomes reachable
+      # beyond this host.
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+
+networks:
+  monitoring:
+
+volumes:
+  prometheus-data:
+  grafana-data:

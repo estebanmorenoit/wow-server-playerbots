@@ -204,6 +204,21 @@ gunzip -c backups/<file>.sql.gz | docker exec -i ac-database mysql -u root -p"$D
 
 These are local backups only — if the disk itself is lost, they're gone too. Consider copying `backups/` off-host periodically for real disaster recovery.
 
+## Monitoring
+
+[`monitoring/docker-compose.yml`](./monitoring/docker-compose.yml) is a standalone Prometheus + Grafana stack — separate from the game stack so it can be started/stopped independently, and doesn't touch the existing homelab reverse proxy:
+
+```bash
+cd monitoring && docker compose up -d
+```
+
+- **Grafana**: `http://<this-host>:3000` — default login `admin` / `admin` (change it if this host is reachable beyond your own network)
+- **Prometheus**: `http://<this-host>:9090` — mainly for direct query/debugging
+- **cAdvisor** collects per-container metrics (CPU/mem/network for every container on this host, including `ac-worldserver` et al. — the same numbers `docker stats` shows, but recorded over time)
+- **node-exporter** collects host-level metrics (CPU, memory, disk, load)
+
+Two dashboards are pre-provisioned automatically (no manual import needed): **Node Exporter Full** (host metrics) and **Docker and system monitoring** (per-container). Both are community dashboards ([1860](https://grafana.com/grafana/dashboards/1860) and [893](https://grafana.com/grafana/dashboards/893)) pinned to specific revisions in `monitoring/grafana/provisioning/dashboards/json/` — re-download a newer revision manually if you ever want an update.
+
 ## Migrating to another host (e.g. a more powerful NUC)
 
 The Docker images are portable — the state and secrets are not, and need to move separately:
