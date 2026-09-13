@@ -4,7 +4,7 @@
 [![WotLK](https://img.shields.io/badge/WoW-3.3.5a%20(WotLK)-4a5dc7)](#connecting-a-client)
 [![AzerothCore](https://img.shields.io/badge/built%20on-AzerothCore-c0392b)](https://www.azerothcore.org/)
 [![Docker Compose](https://img.shields.io/badge/orchestration-Docker%20Compose-2496ed?logo=docker&logoColor=white)](./docker-compose.yml)
-[![Worldserver image size](https://img.shields.io/docker/image-size/estebanmorenoit/ac-wotlk-worldserver-playerbots/quest-loot-fix-test?label=worldserver%20image)](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots)
+[![Worldserver image size](https://img.shields.io/docker/image-size/estebanmorenoit/ac-wotlk-worldserver-playerbots/master?label=worldserver%20image)](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
 Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) — solo-play focused, populated by AI bots instead of real players.
@@ -73,7 +73,7 @@ The C++ side (core + all nine modules) is baked into these images — no build t
 
 All four are built from the same `apps/docker/Dockerfile` (different `target` per service), from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow — `build-images.yml`, manual `workflow_dispatch` trigger only, never runs on push. That workflow checks out all nine modules explicitly (`modules/*` is gitignored in the core repo by design) and patches a known upstream compile bug in mod-llm-chatter before building.
 
-Each new module gets its own image tag rather than overwriting `:master` — the currently-deployed tag is `:quest-loot-fix-test`, with `:instance-reset-test`, `:cfbg-achievements-test`, `:npc-buffer-test`, `:progression-test`, `:ahbot-test`, and `:master` all still available as known-good fallbacks in `docker-compose.yml`.
+Each new module gets its own image tag while under test, rather than overwriting `:master` directly — once verified working (as `:quest-loot-fix-test` was, live, tonight), it gets promoted *to* `:master`, which is what's actually deployed now. `:instance-reset-test`, `:cfbg-achievements-test`, `:npc-buffer-test`, `:progression-test`, and `:ahbot-test` remain in `docker-compose.yml`'s history as earlier known-good states if a rollback is ever needed.
 
 **Exceptions — not Docker Hub images, built locally instead:**
 - `ac-llm-chatter-bridge` — mod-llm-chatter's Python bridge, built straight from `Hokken/mod-llm-chatter` on GitHub via a git build context (no local clone needed for the build itself). `deploy.sh` still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for `.conf.dist` discovery.
