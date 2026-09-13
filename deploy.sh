@@ -77,6 +77,7 @@ SOLOCRAFT_DIR="$DEPLOY_DIR/modules/mod-solocraft"
 LLM_DIR="$DEPLOY_DIR/modules/mod-llm-chatter"
 AHBOT_DIR="$DEPLOY_DIR/modules/mod-ah-bot"
 PROGRESSION_DIR="$DEPLOY_DIR/modules/mod-individual-progression"
+NPC_BUFFER_DIR="$DEPLOY_DIR/modules/mod-npc-buffer"
 
 log() { echo "==> $*"; }
 
@@ -158,6 +159,7 @@ clone_module "$PLAYERBOTS_DIR" https://github.com/mod-playerbots/mod-playerbots.
 clone_module "$SOLOCRAFT_DIR" https://github.com/azerothcore/mod-solocraft.git mod-solocraft
 clone_module "$AHBOT_DIR" https://github.com/NathanHandley/mod-ah-bot-plus.git mod-ah-bot
 clone_module "$PROGRESSION_DIR" https://github.com/ZhengPeiRu21/mod-individual-progression.git mod-individual-progression
+clone_module "$NPC_BUFFER_DIR" https://github.com/azerothcore/mod-npc-buffer.git mod-npc-buffer
 
 # 5. Compose file
 cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
@@ -222,6 +224,16 @@ if [ ! -f "$PROGRESSION_CONF" ]; then
   log "Created $PROGRESSION_CONF from the .dist template."
 else
   log "$PROGRESSION_CONF already exists — leaving your settings as-is."
+fi
+
+# npc_buffer.conf: ships enabled by default (Buff.Enable = 1), no per-server
+# setup needed — the NPC just needs spawning in-game (see README).
+NPC_BUFFER_CONF="$CONF_DIR/npc_buffer.conf"
+if [ ! -f "$NPC_BUFFER_CONF" ]; then
+  cp "$NPC_BUFFER_DIR/conf/npc_buffer.conf.dist" "$NPC_BUFFER_CONF"
+  log "Created $NPC_BUFFER_CONF from the .dist template."
+else
+  log "$NPC_BUFFER_CONF already exists — leaving your settings as-is."
 fi
 
 # mod_llm_chatter.conf — created once from the .dist template, never
