@@ -104,6 +104,10 @@ services:
       # them right without a manual step.
       AC_ENABLE_PLAYER_SETTINGS: "1"
       AC_DBC_ENFORCE_ITEM_ATTRIBUTES: "0"
+      # Announces seasonal events (Brewfest, Hallow's End, etc.) server-wide in
+      # chat when their window opens — doesn't affect whether events run, only
+      # whether that's announced. Off by default in worldserver.conf.
+      AC_EVENT_ANNOUNCE: "1"
       AC_AI_PLAYERBOT_RANDOM_BOT_AUTOLOGIN: "1"
       # Random bots are ambient world population (NPCs wandering zones), not
       # your party — those are recruited separately in-game and aren't capped
