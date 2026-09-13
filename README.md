@@ -14,29 +14,31 @@ Not affiliated with Blizzard Entertainment. For personal/private-server use.
   - [mod-ah-bot](https://github.com/NathanHandley/mod-ah-bot-plus) — populates the Auction House with bot-driven listings (otherwise permanently empty with no real players) — see [Auction House bot](#auction-house-bot) below to activate it
   - [mod-individual-progression](https://github.com/ZhengPeiRu21/mod-individual-progression) — gates content server-side by era (Vanilla → TBC → WotLK) on top of the same 3.3.5a client, restoring period-accurate quests/creatures/itemization along the way — see [Progression](#progression) below
   - [mod-npc-buffer](https://github.com/azerothcore/mod-npc-buffer) — a one-click buff NPC, since solo play means no group to hand out the usual pre-pull buffs — see [NPC Buffer](#npc-buffer) below to spawn it
+  - [mod-cfbg](https://github.com/azerothcore/mod-cfbg) — pools both factions into the same battleground instance, so the fixed random-bot population actually fills PvP queues instead of waiting on one faction alone
+  - [mod-account-achievements](https://github.com/azerothcore/mod-account-achievements) — shares achievement progress across every character on your account, matching retail behavior since Legion
 - **Database**: MySQL 8.4 (official `mysql:8.4` image — not customized)
 - **Orchestration**: Docker Compose
 
 ## Prebuilt images
 
-The C++ side (core + all six modules) is baked into these images — no build toolchain needed to run the server:
+The C++ side (core + all eight modules) is baked into these images — no build toolchain needed to run the server:
 
 | Image | Purpose |
 |---|---|
-| [`estebanmorenoit/ac-wotlk-worldserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots) | World server (game logic), with all six modules built in |
+| [`estebanmorenoit/ac-wotlk-worldserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots) | World server (game logic), with all eight modules built in |
 | [`estebanmorenoit/ac-wotlk-authserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-authserver-playerbots) | Auth/login server (port 3724) |
 | [`estebanmorenoit/ac-wotlk-db-import-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-db-import-playerbots) | One-shot DB bootstrap/migration (run before the servers) |
 | [`estebanmorenoit/ac-wotlk-client-data-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-client-data-playerbots) | One-shot client data extraction (maps/vmaps/mmaps/dbc) |
 
-All four images are built from the same `apps/docker/Dockerfile`, using a different `target` per service — but from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow (`esteban-custom-build.yml`, manual `workflow_dispatch` trigger), not the upstream project's own CI. That workflow checks out all six modules explicitly (`modules/*` is gitignored in the core repo by design — see its `modules/CMakeLists.txt` for the generic auto-discovery mechanism modules rely on) and patches a known upstream compile bug in mod-llm-chatter before building. Images currently deployed here use the `:npc-buffer-test` tag rather than `:master`, so `:progression-test`, `:ahbot-test`, and the original pre-mod images stay available as known-good fallbacks — see `docker-compose.yml`.
+All four images are built from the same `apps/docker/Dockerfile`, using a different `target` per service — but from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow (`esteban-custom-build.yml`, manual `workflow_dispatch` trigger), not the upstream project's own CI. That workflow checks out all eight modules explicitly (`modules/*` is gitignored in the core repo by design — see its `modules/CMakeLists.txt` for the generic auto-discovery mechanism modules rely on) and patches a known upstream compile bug in mod-llm-chatter before building. Images currently deployed here use the `:cfbg-achievements-test` tag rather than `:master`, so `:npc-buffer-test`, `:progression-test`, `:ahbot-test`, and the original pre-mod images stay available as known-good fallbacks — see `docker-compose.yml`.
 
 **Exception**: mod-llm-chatter's Python bridge (`ac-llm-chatter-bridge` below) isn't one of the four prebuilt Hub images above, since it's a separate Python process from the C++ world server. Its build pulls source straight from `Hokken/mod-llm-chatter` on GitHub via a git build context — no local clone needed for this piece. (`deploy.sh` below still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for its `.conf.dist` templates — that's unrelated to the bridge's build.)
 
 ## Running it
 
-[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and all six modules next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), materializes each module's `.conf` from its `.dist` template, brings the stack up in the right order, points the realm at this host's address, and creates a game login account once worldserver is ready.
+[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and all eight modules next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), materializes each module's `.conf` from its `.dist` template, brings the stack up in the right order, points the realm at this host's address, and creates a game login account once worldserver is ready.
 
-The C++ side of `mod-playerbots`, `mod-solocraft`, `mod-ah-bot`, `mod-individual-progression`, and `mod-npc-buffer` is already baked into the prebuilt images, but deploy.sh still clones all five — without their `conf/*.conf.dist` templates present on disk, `playerbots.conf`/`Solocraft.conf`/`mod_ahbot.conf`/`individualProgression.conf`/`npc_buffer.conf` never get generated and worldserver runs with incomplete config (missing `playerbots.conf`/`Solocraft.conf` has crashed the server outright on a prior deploy).
+The C++ side of `mod-playerbots`, `mod-solocraft`, `mod-ah-bot`, `mod-individual-progression`, `mod-npc-buffer`, `mod-cfbg`, and `mod-account-achievements` is already baked into the prebuilt images, but deploy.sh still clones all seven — without their `conf/*.conf.dist` templates present on disk, `playerbots.conf`/`Solocraft.conf`/`mod_ahbot.conf`/`individualProgression.conf`/`npc_buffer.conf`/`CFBG.conf`/`mod_achievements.conf` never get generated and worldserver runs with incomplete config (missing `playerbots.conf`/`Solocraft.conf` has crashed the server outright on a prior deploy).
 
 **Without LLM-driven bot chat:**
 ```bash

@@ -78,6 +78,8 @@ LLM_DIR="$DEPLOY_DIR/modules/mod-llm-chatter"
 AHBOT_DIR="$DEPLOY_DIR/modules/mod-ah-bot"
 PROGRESSION_DIR="$DEPLOY_DIR/modules/mod-individual-progression"
 NPC_BUFFER_DIR="$DEPLOY_DIR/modules/mod-npc-buffer"
+CFBG_DIR="$DEPLOY_DIR/modules/mod-cfbg"
+ACCOUNT_ACHIEVEMENTS_DIR="$DEPLOY_DIR/modules/mod-account-achievements"
 
 log() { echo "==> $*"; }
 
@@ -160,6 +162,8 @@ clone_module "$SOLOCRAFT_DIR" https://github.com/azerothcore/mod-solocraft.git m
 clone_module "$AHBOT_DIR" https://github.com/NathanHandley/mod-ah-bot-plus.git mod-ah-bot
 clone_module "$PROGRESSION_DIR" https://github.com/ZhengPeiRu21/mod-individual-progression.git mod-individual-progression
 clone_module "$NPC_BUFFER_DIR" https://github.com/azerothcore/mod-npc-buffer.git mod-npc-buffer
+clone_module "$CFBG_DIR" https://github.com/azerothcore/mod-cfbg.git mod-cfbg
+clone_module "$ACCOUNT_ACHIEVEMENTS_DIR" https://github.com/azerothcore/mod-account-achievements.git mod-account-achievements
 
 # 5. Compose file
 cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
@@ -234,6 +238,24 @@ if [ ! -f "$NPC_BUFFER_CONF" ]; then
   log "Created $NPC_BUFFER_CONF from the .dist template."
 else
   log "$NPC_BUFFER_CONF already exists — leaving your settings as-is."
+fi
+
+# CFBG.conf / mod_achievements.conf: both ship enabled by default
+# (CFBG.Enable = 1, Account.Achievements.Enable = 1), no per-server setup needed.
+CFBG_CONF="$CONF_DIR/CFBG.conf"
+if [ ! -f "$CFBG_CONF" ]; then
+  cp "$CFBG_DIR/conf/CFBG.conf.dist" "$CFBG_CONF"
+  log "Created $CFBG_CONF from the .dist template."
+else
+  log "$CFBG_CONF already exists — leaving your settings as-is."
+fi
+
+ACHIEVEMENTS_CONF="$CONF_DIR/mod_achievements.conf"
+if [ ! -f "$ACHIEVEMENTS_CONF" ]; then
+  cp "$ACCOUNT_ACHIEVEMENTS_DIR/conf/mod_achievements.conf.dist" "$ACHIEVEMENTS_CONF"
+  log "Created $ACHIEVEMENTS_CONF from the .dist template."
+else
+  log "$ACHIEVEMENTS_CONF already exists — leaving your settings as-is."
 fi
 
 # mod_llm_chatter.conf — created once from the .dist template, never
