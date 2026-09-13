@@ -129,13 +129,17 @@ Bot behavior lives in `ac-worldserver`'s environment variables in [`docker-compo
 
 **Commanding bots in-game:**
 ```
-/invite <botname>                 — recruit a bot like a normal player (or right-click their portrait)
-.playerbot bot addclass <class> [male|female]   — add a random bot of a class to your party
-.playerbot bot add <botname>      — add a specific existing bot by name
-.playerbot bot list               — list your current bots
-.playerbot bot remove <botname>   — remove one from your party
+/invite <botname>                  — recruit a bot like a normal player (or right-click their portrait)
+.playerbots bot addclass <class> [male|female]   — add a random bot of a class to your party
+.playerbots bot add <botname>      — add a specific existing bot by name
+.playerbots bot list               — list your current bots
+.playerbots bot remove <botname>   — remove one AND despawn it (see note below)
 ```
+(Top-level command is `playerbots`, plural — confirmed against the module's own command registration; `.playerbot` without the `s` doesn't exist.)
+
 Valid classes for `addclass`: `warrior`, `paladin`, `hunter`, `rogue`, `priest`, `shaman`, `mage`, `warlock`, `druid`, `dk`.
+
+**Uninviting a bot ≠ removing it.** A plain `/uninvite` (or right-click → Uninvite) only drops the bot from your party roster — its "follow master" order is tracked separately from group membership, so it keeps trailing behind you. Use `.playerbots bot remove <botname>` instead, which calls the bot's actual logout function and makes it disappear for good.
 
 Once in your party, whisper a bot **"help"** for its full order list — follow, stay, equip, spec, and more.
 
@@ -257,7 +261,7 @@ Verified against this exact core's command tables (`src/server/scripts/Commands/
 ```
 .ahbot reload / .ahbot update / .ahbot empty   — apply config changes / force a listing cycle / clear bot listings
 .ip get [player]                          — check mod-individual-progression's current tier
-.playerbot bot add|addclass|list|remove   — see Playerbots above
+.playerbots bot add|addclass|list|remove   — see Playerbots above
 ```
 
 `Rate.XP.Kill` / `Rate.XP.Quest` / `Rate.XP.Quest.DF` / `Rate.XP.Explore` / `Rate.XP.Pet` in `worldserver.conf` control passive XP gain server-wide (core default `1`) — currently set to **`2`** (kill/quest/exploration/pet leveling roughly twice as fast; loot/drop rates are untouched, so gearing pace stays normal relative to quests). Change and run `.reload config` to apply live, no restart needed.
