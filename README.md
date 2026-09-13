@@ -217,7 +217,9 @@ cd monitoring && docker compose up -d
 - **cAdvisor** collects per-container metrics (CPU/mem/network for every container on this host, including `ac-worldserver` et al. — the same numbers `docker stats` shows, but recorded over time)
 - **node-exporter** collects host-level metrics (CPU, memory, disk, load)
 
-Two dashboards are pre-provisioned automatically (no manual import needed): **Node Exporter Full** (host metrics) and **Docker and system monitoring** (per-container). Both are community dashboards ([1860](https://grafana.com/grafana/dashboards/1860) and [893](https://grafana.com/grafana/dashboards/893)) pinned to specific revisions in `monitoring/grafana/provisioning/dashboards/json/` — re-download a newer revision manually if you ever want an update.
+Two dashboards are pre-provisioned automatically (no manual import needed): **Node Exporter Full** ([1860](https://grafana.com/grafana/dashboards/1860), host metrics) and **cadvisor dashboard** ([19792](https://grafana.com/grafana/dashboards/19792), per-container). Both pinned to specific revisions in `monitoring/grafana/provisioning/dashboards/json/` — re-download a newer revision manually if you ever want an update.
+
+(An earlier revision of this stack provisioned dashboard [893](https://grafana.com/grafana/dashboards/893) for per-container metrics — swapped out because it predates a 2018 node_exporter metric rename and showed no data at all against current exporters. If you ever add another community dashboard here, check how recently it was updated first.)
 
 ## Migrating to another host (e.g. a more powerful NUC)
 
