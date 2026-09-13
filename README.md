@@ -186,7 +186,7 @@ Rate.XP.Kill / Rate.XP.Quest / Rate.XP.Explore / etc. in `worldserver.conf` cont
 
 ## Backups
 
-[`backup.sh`](./backup.sh) dumps every database (`--all-databases`, so characters/guilds/world/playerbots/auth) from the running `ac-database` container to a timestamped, gzip-compressed file under `backups/` (gitignored — never committed), then deletes local dumps older than `BACKUP_RETENTION_DAYS` (default 14).
+[`backup.sh`](./backup.sh) dumps every database (`--all-databases`, so characters/guilds/world/playerbots/auth) from the running `ac-database` container to a timestamped, gzip-compressed file under `backups/` (gitignored — never committed), then deletes local dumps older than `BACKUP_RETENTION_DAYS` (default 30).
 
 ```bash
 ./backup.sh

@@ -10,7 +10,7 @@
 #   DEPLOY_DIR              Where the stack is deployed (default: ../azerothcore-playerbots
 #                            relative to this script, same default as deploy.sh)
 #   BACKUP_DIR              Where dumps are written (default: ./backups next to this script)
-#   BACKUP_RETENTION_DAYS   How many days of local dumps to keep (default: 14)
+#   BACKUP_RETENTION_DAYS   How many days of local dumps to keep (default: 30)
 #
 # Restoring a dump (see README's "Migrating to another host" for the full procedure):
 #   gunzip -c backups/<file>.sql.gz | docker exec -i ac-database mysql -u root -p"$DB_ROOT_PASSWORD"
@@ -20,7 +20,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="${DEPLOY_DIR:-$SCRIPT_DIR/../azerothcore-playerbots}"
 BACKUP_DIR="${BACKUP_DIR:-$SCRIPT_DIR/backups}"
-RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 
 log() { echo "==> $*"; }
 
