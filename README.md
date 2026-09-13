@@ -264,6 +264,8 @@ Verified against this exact core's command tables (`src/server/scripts/Commands/
 .cheat god|cooldown|casttime|power on/off — invulnerability / no cooldowns / instant cast / unlimited resources
 .reload config                            — re-read worldserver.conf live — no restart needed
 .account set gmlevel <account> <level> -1 — grant GM access, all realms
+.gear repair [player]                     — repair all of a player's equipped items (no plain ".repairitems" on this core)
+.saveall                                  — force-save every online character now (e.g. right before a backup or restart)
 ```
 
 **Teleport**
@@ -286,12 +288,15 @@ Verified against this exact core's command tables (`src/server/scripts/Commands/
 .npc add <id>  /  .npc delete             — spawn / remove an NPC at your location
 .npc set level <level>                    — change a spawned NPC's level
 .gobject near [radius]  /  .gobject add <id>  — list nearby objects with GUIDs / spawn one
+.respawn                                  — respawn the selected creature/object now, ignoring its respawn timer
 ```
 
 **Character & testing**
 ```
 .die                                      — kill yourself instantly (fast death/revive testing)
 .morph <displayid>  /  .demorph           — change your appearance
+.pinfo [player]                           — account + guild info for a player (GM level, email, last IP, etc.)
+.maxskill                                 — max out all of the selected player's skills for their current level
 ```
 
 **Module-specific**
