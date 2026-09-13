@@ -1,5 +1,10 @@
 # wow-server-playerbots
 
+[![WotLK](https://img.shields.io/badge/WoW-3.3.5a%20(WotLK)-4a5dc7)](#connecting-a-client)
+[![AzerothCore](https://img.shields.io/badge/built%20on-AzerothCore-c0392b)](https://www.azerothcore.org/)
+[![Docker Compose](https://img.shields.io/badge/orchestration-Docker%20Compose-2496ed?logo=docker&logoColor=white)](./docker-compose.yml)
+[![Worldserver image size](https://img.shields.io/docker/image-size/estebanmorenoit/ac-wotlk-worldserver-playerbots/quest-loot-fix-test?label=worldserver%20image)](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots)
+
 Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) — solo-play focused, populated by AI bots instead of real players.
 
 Not affiliated with Blizzard Entertainment. For personal/private-server use.
@@ -15,12 +20,25 @@ Not affiliated with Blizzard Entertainment. For personal/private-server use.
 - [Operations](#operations)
 - [Known issues](#known-issues)
 
+---
+
 ## What's running
 
 - **Core**: AzerothCore (fork: [`mod-playerbots/azerothcore-wotlk`](https://github.com/mod-playerbots/azerothcore-wotlk), Playerbot branch)
 - **Database**: MySQL 8.4 (official `mysql:8.4` image — not customized)
 - **Orchestration**: Docker Compose
 - **Auto-sleep / wake-on-connect**: the game stack sits fully stopped when nobody's playing and wakes itself the moment a client connects — see [Auto-sleep / wake-on-connect](#auto-sleep--wake-on-connect). Practical effect: your *very first* login after a break shows a connection error while it boots, then works normally — see [Connecting a client](#connecting-a-client).
+
+```mermaid
+graph LR
+    Client["WoW 3.3.5a client"] -- "3724 / 8085" --> Proxy["wake-proxy\n(always on)"]
+    Proxy -- "wakes + relays" --> Auth["ac-authserver"]
+    Proxy -- "wakes + relays" --> World["ac-worldserver"]
+    Auth --> DB[("ac-database")]
+    World --> DB
+    World --> Bridge["ac-llm-chatter-bridge"]
+    Bridge -- "API call" --> LLM["your LLM provider"]
+```
 
 **Modules** (all under `modules/`, compiled statically into `worldserver`):
 
@@ -35,6 +53,8 @@ Not affiliated with Blizzard Entertainment. For personal/private-server use.
 | [mod-cfbg](https://github.com/azerothcore/mod-cfbg) | Cross-faction battlegrounds, so the fixed bot population fills PvP queues |
 | [mod-account-achievements](https://github.com/azerothcore/mod-account-achievements) | Shares achievement progress across every character on your account |
 | [mod-instance-reset](https://github.com/azerothcore/mod-instance-reset) | Reset your own dungeon/raid lockouts on demand — [setup](#instance-reset) |
+
+---
 
 ## Prebuilt images
 
@@ -54,6 +74,8 @@ Each new module gets its own image tag rather than overwriting `:master` — the
 **Exceptions — not Docker Hub images, built locally instead:**
 - `ac-llm-chatter-bridge` — mod-llm-chatter's Python bridge, built straight from `Hokken/mod-llm-chatter` on GitHub via a git build context (no local clone needed for the build itself). `deploy.sh` still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for `.conf.dist` discovery.
 - `wake-proxy` — a tiny stdlib-only Python relay (no dependencies to speak of), built from [`wake-proxy/`](./wake-proxy/) in *this* repo (`build: ./wake-proxy` in `docker-compose.yml`). Building the four C++ images is expensive enough to justify hosting pre-built copies on Docker Hub; this one builds from source in a couple of seconds, so there's no benefit to a registry — and building straight from committed source means the running image can never drift from what's actually in git. `docker compose up -d` builds it automatically the first time, same as any fresh deploy of the rest of the stack — nothing extra to run by hand.
+
+---
 
 ## Quick start
 
@@ -104,6 +126,8 @@ Detach with `Ctrl-P` then `Ctrl-Q` — **never `Ctrl-C`**, which kills the world
 ```
 Both prompt for a typed `yes`; add `-y`/`--yes` to skip for scripting. `--purge` destroys every character, guild, and all progress with no undo — [back up the database first](#backups) if there's any chance you'll want it again.
 
+---
+
 ## Connecting a client
 
 Requires a **3.3.5a (build 12340)** WotLK client.
@@ -118,6 +142,8 @@ Requires a **3.3.5a (build 12340)** WotLK client.
 **If the server has been idle for a while, your first login attempt will likely show a connection error.** That's expected — see [Auto-sleep / wake-on-connect](#auto-sleep--wake-on-connect): the stack sleeps itself when nobody's playing and wakes on your first connection attempt, which takes ~60-70s. Just wait a minute and log in again; it'll go straight through from then on.
 
 If chat is enabled, check it actually worked: `docker logs ac-llm-chatter-bridge` should show five `[PASS]` lines (config, module enabled, provider config, database connection, live connectivity test). Any `[FAIL]` means bots won't chat until it's fixed.
+
+---
 
 ## Modules in detail
 
@@ -216,6 +242,8 @@ Talk to an NPC to reset your own dungeon/raid lockouts on demand instead of wait
 
 It **won't reset the instance you're currently standing in** — leave it first, then talk to the NPC. Configurable in `env/dist/etc/modules/instance-reset.conf` — `TransactionType` can charge money and/or a token (1/2/3) instead of free (0).
 
+---
+
 ## GM commands reference (this build)
 
 Verified against this exact core's command tables (`src/server/scripts/Commands/`) — some tutorials online reference commands from other cores that don't exist here (e.g. there's no `.modify xp`).
@@ -270,6 +298,8 @@ Verified against this exact core's command tables (`src/server/scripts/Commands/
 ```
 
 `Rate.XP.Kill` / `Rate.XP.Quest` / `Rate.XP.Quest.DF` / `Rate.XP.Explore` / `Rate.XP.Pet` in `worldserver.conf` control passive XP gain server-wide (core default `1`) — currently set to **`2`** (kill/quest/exploration/pet leveling roughly twice as fast; loot/drop rates are untouched, so gearing pace stays normal relative to quests). Change and run `.reload config` to apply live, no restart needed.
+
+---
 
 ## Operations
 
@@ -338,6 +368,8 @@ The Docker images are portable — the state and secrets are not:
 3. **Copy secrets out-of-band** (SCP, not git): `env/dist/etc/modules/mod_llm_chatter.conf` (has your real LLM API key) and the real `DB_ROOT_PASSWORD` — neither belongs in this repo.
 4. **Re-check bot count against the new host's core count.** 75 bots at 6 iterations/tick used ~2 cores on the original box — that's what the `cpus: "3.0"` cap was sized around. A more powerful host has headroom to raise `AC_AI_PLAYERBOT_MAX_RANDOM_BOTS` (and `ITERATIONS_PER_TICK` back toward the default of 10) — just raise the `cpus`/`memory` limits to match. mod-playerbots auto-provisions however many `RNDBOT` accounts the new bot count needs, so there's no separate account-count step.
 5. **Open port 3724** (and 8085 for direct world-server access) in the new host's firewall/router, then update `realmlist.wtf` on any client.
+
+---
 
 ## Known issues
 
