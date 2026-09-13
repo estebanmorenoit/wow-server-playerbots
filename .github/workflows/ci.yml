@@ -1,7 +1,7 @@
 name: ci
 # Lints and validates this repo's own deploy tooling — deploy.sh/backup.sh
 # and both compose files — on every push and PR. Doesn't touch the actual
-# game server or the AzerothCore fork's own build (esteban-custom-build.yml
+# game server or the AzerothCore fork's own build (build-images.yml
 # over there); this is purely "does the stuff in *this* repo still make
 # sense" before it ever reaches a real host.
 on:

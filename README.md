@@ -71,7 +71,7 @@ The C++ side (core + all nine modules) is baked into these images — no build t
 | `estebanmorenoit/ac-wotlk-db-import-playerbots` | One-shot DB bootstrap/migration (runs before the servers) |
 | `estebanmorenoit/ac-wotlk-client-data-playerbots` | One-shot client data extraction (maps/vmaps/mmaps/dbc) |
 
-All four are built from the same `apps/docker/Dockerfile` (different `target` per service), from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow — `esteban-custom-build.yml`, manual `workflow_dispatch` trigger only, never runs on push. That workflow checks out all nine modules explicitly (`modules/*` is gitignored in the core repo by design) and patches a known upstream compile bug in mod-llm-chatter before building.
+All four are built from the same `apps/docker/Dockerfile` (different `target` per service), from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow — `build-images.yml`, manual `workflow_dispatch` trigger only, never runs on push. That workflow checks out all nine modules explicitly (`modules/*` is gitignored in the core repo by design) and patches a known upstream compile bug in mod-llm-chatter before building.
 
 Each new module gets its own image tag rather than overwriting `:master` — the currently-deployed tag is `:quest-loot-fix-test`, with `:instance-reset-test`, `:cfbg-achievements-test`, `:npc-buffer-test`, `:progression-test`, `:ahbot-test`, and `:master` all still available as known-good fallbacks in `docker-compose.yml`.
 
