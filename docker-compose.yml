@@ -31,7 +31,7 @@ services:
 
   ac-client-data-init:
     container_name: ac-client-data-init
-    image: estebanmorenoit/ac-wotlk-client-data-playerbots:ahbot-test
+    image: estebanmorenoit/ac-wotlk-client-data-playerbots:progression-test
     volumes:
       - ac-client-data:/azerothcore/env/dist/data
     networks:
@@ -41,7 +41,7 @@ services:
   # ac-worldserver/ac-authserver; exits when done (see depends_on below).
   ac-db-import:
     container_name: ac-db-import
-    image: estebanmorenoit/ac-wotlk-db-import-playerbots:ahbot-test
+    image: estebanmorenoit/ac-wotlk-db-import-playerbots:progression-test
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
       AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
@@ -57,7 +57,7 @@ services:
 
   ac-authserver:
     container_name: ac-authserver
-    image: estebanmorenoit/ac-wotlk-authserver-playerbots:ahbot-test
+    image: estebanmorenoit/ac-wotlk-authserver-playerbots:progression-test
     restart: unless-stopped
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
@@ -74,7 +74,7 @@ services:
 
   ac-worldserver:
     container_name: ac-worldserver
-    image: estebanmorenoit/ac-wotlk-worldserver-playerbots:ahbot-test
+    image: estebanmorenoit/ac-wotlk-worldserver-playerbots:progression-test
     restart: unless-stopped
     stdin_open: true
     tty: true
@@ -97,6 +97,13 @@ services:
       AC_CHARACTER_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_characters"
       # mod-playerbots creates/manages this database itself on first connect
       AC_PLAYERBOTS_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_playerbots"
+      # mod-individual-progression requires both of these (see its README) —
+      # core-level settings, overridden here via AzerothCore's generic
+      # AC_<KEY> config mechanism (verified in src/common/Configuration/Config.cpp)
+      # rather than editing worldserver.conf directly, so a fresh deploy gets
+      # them right without a manual step.
+      AC_ENABLE_PLAYER_SETTINGS: "1"
+      AC_DBC_ENFORCE_ITEM_ATTRIBUTES: "0"
       AC_AI_PLAYERBOT_RANDOM_BOT_AUTOLOGIN: "1"
       # Random bots are ambient world population (NPCs wandering zones), not
       # your party — those are recruited separately in-game and aren't capped

@@ -76,6 +76,7 @@ PLAYERBOTS_DIR="$DEPLOY_DIR/modules/mod-playerbots"
 SOLOCRAFT_DIR="$DEPLOY_DIR/modules/mod-solocraft"
 LLM_DIR="$DEPLOY_DIR/modules/mod-llm-chatter"
 AHBOT_DIR="$DEPLOY_DIR/modules/mod-ah-bot"
+PROGRESSION_DIR="$DEPLOY_DIR/modules/mod-individual-progression"
 
 log() { echo "==> $*"; }
 
@@ -156,6 +157,7 @@ clone_module "$LLM_DIR" https://github.com/Hokken/mod-llm-chatter.git mod-llm-ch
 clone_module "$PLAYERBOTS_DIR" https://github.com/mod-playerbots/mod-playerbots.git mod-playerbots
 clone_module "$SOLOCRAFT_DIR" https://github.com/azerothcore/mod-solocraft.git mod-solocraft
 clone_module "$AHBOT_DIR" https://github.com/NathanHandley/mod-ah-bot-plus.git mod-ah-bot
+clone_module "$PROGRESSION_DIR" https://github.com/ZhengPeiRu21/mod-individual-progression.git mod-individual-progression
 
 # 5. Compose file
 cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
@@ -208,6 +210,18 @@ if [ ! -f "$AHBOT_CONF" ]; then
   log "Created $AHBOT_CONF from the .dist template (disabled until you add a character GUID — see README)."
 else
   log "$AHBOT_CONF already exists — leaving your settings as-is."
+fi
+
+# individualProgression.conf: ships enabled by default (IndividualProgression.Enable = 1).
+# The two core-level settings it needs (EnablePlayerSettings, DBC.EnforceItemAttributes)
+# are set via AC_ env vars in docker-compose.yml instead of here, since those
+# live in worldserver.conf, not this module's own conf file.
+PROGRESSION_CONF="$CONF_DIR/individualProgression.conf"
+if [ ! -f "$PROGRESSION_CONF" ]; then
+  cp "$PROGRESSION_DIR/conf/individualProgression.conf.dist" "$PROGRESSION_CONF"
+  log "Created $PROGRESSION_CONF from the .dist template."
+else
+  log "$PROGRESSION_CONF already exists — leaving your settings as-is."
 fi
 
 # mod_llm_chatter.conf — created once from the .dist template, never
@@ -276,20 +290,28 @@ else
   docker compose up -d
 fi
 
-# 8. Advertise the right address to game clients. db-import seeds the realm
-# row with 127.0.0.1, which only works for a client on this exact machine —
-# anyone connecting from another device gets stuck at realm select because
-# the world-server handoff then tries to reach 127.0.0.1 on their machine,
-# not this host. authserver re-reads this table live, so no restart needed.
+# 8. Fix up the realm row db-import seeds, which is broken for a genuinely
+# fresh deploy in two ways that only surface on a from-scratch DB (every
+# deploy on this host until now was an incremental upgrade of an existing
+# DB, so neither had ever actually been hit before):
+#   - address defaults to 127.0.0.1, which only works for a client on this
+#     exact machine — anyone else gets stuck at realm select because the
+#     world-server handoff then tries to reach 127.0.0.1 on *their* machine.
+#   - flag defaults to 2 (REALM_FLAG_OFFLINE), which authserver's realm-list
+#     query excludes entirely — with zero valid realms, authserver refuses
+#     to start at all ("No valid realms specified"), so this one has to be
+#     fixed before authserver can come up, not just before clients connect.
 REALM_ADDRESS="${REALM_ADDRESS:-$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')}"
 REALM_ADDRESS="${REALM_ADDRESS:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
 if [ -n "$REALM_ADDRESS" ]; then
   docker compose exec -T ac-database mysql -uroot -p"$DB_ROOT_PASSWORD" acore_auth \
-    -e "UPDATE realmlist SET address='$REALM_ADDRESS' WHERE id=1;" 2>/dev/null \
-    && log "Realm now advertises $REALM_ADDRESS:8085 to game clients." \
-    || echo "Couldn't set the realm address automatically — set it manually: UPDATE realmlist SET address='<your-ip>' WHERE id=1; (in acore_auth)" >&2
+    -e "UPDATE realmlist SET address='$REALM_ADDRESS', flag=0 WHERE id=1;" 2>/dev/null \
+    && log "Realm now advertises $REALM_ADDRESS:8085 to game clients (and is marked online)." \
+    || echo "Couldn't set the realm address/flag automatically — set them manually: UPDATE realmlist SET address='<your-ip>', flag=0 WHERE id=1; (in acore_auth)" >&2
 else
-  echo "Couldn't auto-detect this host's address — set REALM_ADDRESS and re-run, or update the realmlist table manually." >&2
+  docker compose exec -T ac-database mysql -uroot -p"$DB_ROOT_PASSWORD" acore_auth \
+    -e "UPDATE realmlist SET flag=0 WHERE id=1;" 2>/dev/null
+  echo "Couldn't auto-detect this host's address — set REALM_ADDRESS and re-run, or update the realmlist table manually. (flag was still cleared so authserver can at least start)" >&2
 fi
 
 # 9. Create a test game account, once. Uses a pty-wrapped `docker attach`

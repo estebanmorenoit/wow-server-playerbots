@@ -1,6 +1,6 @@
 # wow-server-playerbots
 
-Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) with the [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots), [mod-solocraft](https://github.com/azerothcore/mod-solocraft), [mod-llm-chatter](https://github.com/Hokken/mod-llm-chatter), and [mod-ah-bot](https://github.com/NathanHandley/mod-ah-bot-plus) modules.
+Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) with the [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots), [mod-solocraft](https://github.com/azerothcore/mod-solocraft), [mod-llm-chatter](https://github.com/Hokken/mod-llm-chatter), [mod-ah-bot](https://github.com/NathanHandley/mod-ah-bot-plus), and [mod-individual-progression](https://github.com/ZhengPeiRu21/mod-individual-progression) modules.
 
 Not affiliated with Blizzard Entertainment. For personal/private-server use.
 
@@ -12,29 +12,30 @@ Not affiliated with Blizzard Entertainment. For personal/private-server use.
   - [mod-solocraft](https://github.com/azerothcore/mod-solocraft) — scales dungeon/raid boss stats to your actual group size
   - [mod-llm-chatter](https://github.com/Hokken/mod-llm-chatter) — bots chat dynamically via a real LLM (Anthropic/OpenAI/Google/OpenRouter/Ollama) instead of canned lines
   - [mod-ah-bot](https://github.com/NathanHandley/mod-ah-bot-plus) — populates the Auction House with bot-driven listings (otherwise permanently empty with no real players) — see [Auction House bot](#auction-house-bot) below to activate it
+  - [mod-individual-progression](https://github.com/ZhengPeiRu21/mod-individual-progression) — gates content server-side by era (Vanilla → TBC → WotLK) on top of the same 3.3.5a client, restoring period-accurate quests/creatures/itemization along the way — see [Progression](#progression) below
 - **Database**: MySQL 8.4 (official `mysql:8.4` image — not customized)
 - **Orchestration**: Docker Compose
 
 ## Prebuilt images
 
-The C++ side (core + all four modules) is baked into these images — no build toolchain needed to run the server:
+The C++ side (core + all five modules) is baked into these images — no build toolchain needed to run the server:
 
 | Image | Purpose |
 |---|---|
-| [`estebanmorenoit/ac-wotlk-worldserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots) | World server (game logic), with all four modules built in |
+| [`estebanmorenoit/ac-wotlk-worldserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots) | World server (game logic), with all five modules built in |
 | [`estebanmorenoit/ac-wotlk-authserver-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-authserver-playerbots) | Auth/login server (port 3724) |
 | [`estebanmorenoit/ac-wotlk-db-import-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-db-import-playerbots) | One-shot DB bootstrap/migration (run before the servers) |
 | [`estebanmorenoit/ac-wotlk-client-data-playerbots`](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-client-data-playerbots) | One-shot client data extraction (maps/vmaps/mmaps/dbc) |
 
-All four are built from the same `apps/docker/Dockerfile`, using a different `target` per service — but from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow (`esteban-custom-build.yml`, manual `workflow_dispatch` trigger), not the upstream project's own CI. That workflow checks out all four modules explicitly (`modules/*` is gitignored in the core repo by design — see its `modules/CMakeLists.txt` for the generic auto-discovery mechanism modules rely on) and patches a known upstream compile bug in mod-llm-chatter before building. Images currently deployed here use the `:ahbot-test` tag rather than `:master`, so the pre-ahbot images stay available as a known-good fallback — see `docker-compose.yml`.
+All four images are built from the same `apps/docker/Dockerfile`, using a different `target` per service — but from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow (`esteban-custom-build.yml`, manual `workflow_dispatch` trigger), not the upstream project's own CI. That workflow checks out all five modules explicitly (`modules/*` is gitignored in the core repo by design — see its `modules/CMakeLists.txt` for the generic auto-discovery mechanism modules rely on) and patches a known upstream compile bug in mod-llm-chatter before building. Images currently deployed here use the `:progression-test` tag rather than `:master`, so `:ahbot-test` and the original pre-mod images stay available as known-good fallbacks — see `docker-compose.yml`.
 
 **Exception**: mod-llm-chatter's Python bridge (`ac-llm-chatter-bridge` below) isn't one of the four prebuilt Hub images above, since it's a separate Python process from the C++ world server. Its build pulls source straight from `Hokken/mod-llm-chatter` on GitHub via a git build context — no local clone needed for this piece. (`deploy.sh` below still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for its `.conf.dist` templates — that's unrelated to the bridge's build.)
 
 ## Running it
 
-[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and all four modules next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), materializes each module's `.conf` from its `.dist` template, brings the stack up in the right order, points the realm at this host's address, and creates a game login account once worldserver is ready.
+[`deploy.sh`](./deploy.sh) does the whole thing in one command: clones the core and all five modules next to itself (skipped if already present, so it's safe to re-run), copies in `docker-compose.yml`, generates a random `DB_ROOT_PASSWORD` into a gitignored `.env` (skipped if `.env` already exists), materializes each module's `.conf` from its `.dist` template, brings the stack up in the right order, points the realm at this host's address, and creates a game login account once worldserver is ready.
 
-The C++ side of `mod-playerbots`, `mod-solocraft`, and `mod-ah-bot` is already baked into the prebuilt images, but deploy.sh still clones all three — without their `conf/*.conf.dist` templates present on disk, `playerbots.conf`/`Solocraft.conf`/`mod_ahbot.conf` never get generated and worldserver runs with incomplete config (missing `playerbots.conf`/`Solocraft.conf` has crashed the server outright on a prior deploy).
+The C++ side of `mod-playerbots`, `mod-solocraft`, `mod-ah-bot`, and `mod-individual-progression` is already baked into the prebuilt images, but deploy.sh still clones all four — without their `conf/*.conf.dist` templates present on disk, `playerbots.conf`/`Solocraft.conf`/`mod_ahbot.conf`/`individualProgression.conf` never get generated and worldserver runs with incomplete config (missing `playerbots.conf`/`Solocraft.conf` has crashed the server outright on a prior deploy).
 
 **Without LLM-driven bot chat:**
 ```bash
@@ -134,6 +135,22 @@ mod-llm-chatter's bridge polls the database for chat requests; `LLMChatter.Bridg
 4. `.ahbot reload` in-game (GM) to pick up the change without a restart, then `.ahbot update` to force the first batch of listings rather than waiting for the next cycle.
 
 It only adds `AuctionHouseBot.ItemsPerCycle` (75 by default) items per tick, so expect the AH to take a few hours to fully populate. `.ahbot empty` clears bot-listed auctions if you want to reset and retune pricing (player auctions are untouched).
+
+## Progression
+
+`mod-individual-progression` gates world content by era — Vanilla → TBC → WotLK — server-side, on the same 3.3.5a client. Ships **enabled** by default (`IndividualProgression.Enable = 1`) with no per-character setup needed, unlike the AH bot above.
+
+Two core-level prerequisites the module needs are set automatically via `docker-compose.yml` env vars rather than requiring a manual config edit:
+- `AC_ENABLE_PLAYER_SETTINGS=1` — the module stores each character's progression phase using AzerothCore's player-settings system, which is off by default.
+- `AC_DBC_ENFORCE_ITEM_ATTRIBUTES=0` — lets the module override item stats to their period-correct Vanilla/TBC values.
+
+Its own README confirms explicit **Playerbots support** — this is why it was chosen over the alternative (NPCBots), which this server doesn't run.
+
+Notes:
+- **This module assumes a fresh start.** It's designed around characters progressing through content in original release order — it wasn't added retroactively onto an already-leveled save, since existing characters/zones/gear wouldn't reflect an accurate phase state.
+- `IndividualProgression.EnforceGroupRules` ships **disabled** (`0`) — enabling it would restrict grouping to only characters in the same progression phase, which would fragment solo bot parties by phase. Left off for that reason.
+- An **optional client-side `.mpq` patch** (in the module's `optional/` folder) adds extra period authenticity (era-correct reagents, etc.) — not required, the module works fully without it.
+- See the module's own [list of changes](https://github.com/ZhengPeiRu21/mod-individual-progression/wiki/List-of-Changes) and [progression tiers](https://github.com/ZhengPeiRu21/mod-individual-progression/wiki/List-of-Progression-Tiers) for what each phase unlocks.
 
 ## GM commands reference (this build)
 
