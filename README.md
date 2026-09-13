@@ -260,7 +260,7 @@ Verified against this exact core's command tables (`src/server/scripts/Commands/
 .playerbot bot add|addclass|list|remove   — see Playerbots above
 ```
 
-`Rate.XP.Kill` / `Rate.XP.Quest` / `Rate.XP.Explore` / etc. in `worldserver.conf` control passive XP gain server-wide (default `1`) — change and run `.reload config`, no restart needed.
+`Rate.XP.Kill` / `Rate.XP.Quest` / `Rate.XP.Quest.DF` / `Rate.XP.Explore` / `Rate.XP.Pet` in `worldserver.conf` control passive XP gain server-wide (core default `1`) — currently set to **`2`** (kill/quest/exploration/pet leveling roughly twice as fast; loot/drop rates are untouched, so gearing pace stays normal relative to quests). Change and run `.reload config` to apply live, no restart needed.
 
 ## Operations
 
