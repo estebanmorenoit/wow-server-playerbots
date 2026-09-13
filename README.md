@@ -1,5 +1,6 @@
 # wow-server-playerbots
 
+[![CI](https://github.com/estebanmorenoit/wow-server-playerbots/actions/workflows/ci.yml/badge.svg)](https://github.com/estebanmorenoit/wow-server-playerbots/actions/workflows/ci.yml)
 [![WotLK](https://img.shields.io/badge/WoW-3.3.5a%20(WotLK)-4a5dc7)](#connecting-a-client)
 [![AzerothCore](https://img.shields.io/badge/built%20on-AzerothCore-c0392b)](https://www.azerothcore.org/)
 [![Docker Compose](https://img.shields.io/badge/orchestration-Docker%20Compose-2496ed?logo=docker&logoColor=white)](./docker-compose.yml)
