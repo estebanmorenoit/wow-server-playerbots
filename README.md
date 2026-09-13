@@ -20,6 +20,7 @@ Not affiliated with Blizzard Entertainment. For personal/private-server use.
 - **Core**: AzerothCore (fork: [`mod-playerbots/azerothcore-wotlk`](https://github.com/mod-playerbots/azerothcore-wotlk), Playerbot branch)
 - **Database**: MySQL 8.4 (official `mysql:8.4` image — not customized)
 - **Orchestration**: Docker Compose
+- **Auto-sleep / wake-on-connect**: the game stack sits fully stopped when nobody's playing and wakes itself the moment a client connects — see [Auto-sleep / wake-on-connect](#auto-sleep--wake-on-connect). Practical effect: your *very first* login after a break shows a connection error while it boots, then works normally — see [Connecting a client](#connecting-a-client).
 
 **Modules** (all under `modules/`, compiled statically into `worldserver`):
 
@@ -50,7 +51,9 @@ All four are built from the same `apps/docker/Dockerfile` (different `target` pe
 
 Each new module gets its own image tag rather than overwriting `:master` — the currently-deployed tag is `:instance-reset-test`, with `:cfbg-achievements-test`, `:npc-buffer-test`, `:progression-test`, `:ahbot-test`, and `:master` all still available as known-good fallbacks in `docker-compose.yml`.
 
-**Exception**: mod-llm-chatter's Python bridge (`ac-llm-chatter-bridge`) isn't one of the four images above — it's a separate Python process, built straight from `Hokken/mod-llm-chatter` on GitHub via a git build context (no local clone needed for the build itself). `deploy.sh` still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for `.conf.dist` discovery.
+**Exceptions — not Docker Hub images, built locally instead:**
+- `ac-llm-chatter-bridge` — mod-llm-chatter's Python bridge, built straight from `Hokken/mod-llm-chatter` on GitHub via a git build context (no local clone needed for the build itself). `deploy.sh` still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for `.conf.dist` discovery.
+- `wake-proxy` — a tiny stdlib-only Python relay (no dependencies to speak of), built from [`wake-proxy/`](./wake-proxy/) in *this* repo (`build: ./wake-proxy` in `docker-compose.yml`). Building the four C++ images is expensive enough to justify hosting pre-built copies on Docker Hub; this one builds from source in a couple of seconds, so there's no benefit to a registry — and building straight from committed source means the running image can never drift from what's actually in git. `docker compose up -d` builds it automatically the first time, same as any fresh deploy of the rest of the stack — nothing extra to run by hand.
 
 ## Quick start
 
@@ -111,6 +114,8 @@ Requires a **3.3.5a (build 12340)** WotLK client.
    set realmlist <YOUR_SERVER_IP>
    ```
 3. Launch the client — it authenticates on port 3724 and hands off to the world server.
+
+**If the server has been idle for a while, your first login attempt will likely show a connection error.** That's expected — see [Auto-sleep / wake-on-connect](#auto-sleep--wake-on-connect): the stack sleeps itself when nobody's playing and wakes on your first connection attempt, which takes ~60-70s. Just wait a minute and log in again; it'll go straight through from then on.
 
 If chat is enabled, check it actually worked: `docker logs ac-llm-chatter-bridge` should show five `[PASS]` lines (config, module enabled, provider config, database connection, live connectivity test). Any `[FAIL]` means bots won't chat until it's fixed.
 
