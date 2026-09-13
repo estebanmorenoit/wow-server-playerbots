@@ -5,10 +5,13 @@
 [![AzerothCore](https://img.shields.io/badge/built%20on-AzerothCore-c0392b)](https://www.azerothcore.org/)
 [![Docker Compose](https://img.shields.io/badge/orchestration-Docker%20Compose-2496ed?logo=docker&logoColor=white)](./docker-compose.yml)
 [![Worldserver image size](https://img.shields.io/docker/image-size/estebanmorenoit/ac-wotlk-worldserver-playerbots/quest-loot-fix-test?label=worldserver%20image)](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
 Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) — solo-play focused, populated by AI bots instead of real players.
 
 Not affiliated with Blizzard Entertainment. For personal/private-server use.
+
+[MIT](./LICENSE) covers what's actually authored in this repo — `deploy.sh`, `backup.sh`, `wake-proxy/`, `docker-compose.yml`, this README. It does *not* cover AzerothCore or the nine modules, which `deploy.sh` clones separately at deploy time straight from their own repos, each under its own license (mostly AGPL-3.0/GPL-2.0) — check those repos directly if that matters for your use case.
 
 ## Contents
 
