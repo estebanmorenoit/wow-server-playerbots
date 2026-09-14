@@ -1,8 +1,27 @@
+# This host's CPU is 2 physical cores/4 threads (0+2 share one core, 1+3
+# the other — see `lscpu -e`); every game-stack service below reserves
+# threads 1-3 via this one anchor so the reservation only needs updating in
+# one place (e.g. when migrating to different hardware — see "Migrating to
+# another host" in the README).
+x-game-cpuset: &game-cpuset "1,2,3"
+
 services:
   ac-database:
     container_name: ac-database
     image: mysql:8.4
     restart: unless-stopped
+    # cpuset (here and on every other game-stack service below): this host's
+    # CPU is 2 physical cores/4 threads (0+2 share one core, 1+3 the other —
+    # see `lscpu -e`), shared with ~30 unrelated containers for other
+    # self-hosted services. Reserving threads 1-3 (all of the second
+    # physical core, plus one thread of the first) for the game stack and
+    # confining everything else to thread 0 gave the game stack priority —
+    # the other services are mostly idle except when actively streaming.
+    # This is a *hard* reservation via cpuset (unlike the `cpus:` quota
+    # below, which only caps a container's own usage, not what else can run
+    # on the same cores) — the other containers were pinned live via
+    # `docker update --cpuset-cpus=0`, not through this repo.
+    cpuset: *game-cpuset
     # Default innodb_buffer_pool_size (128MB) is smaller than this server's
     # actual data (~550MB across all 4 databases), forcing MySQL to evict and
     # re-read from disk on a host that has RAM to spare. 1G comfortably fits
@@ -32,6 +51,7 @@ services:
   ac-client-data-init:
     container_name: ac-client-data-init
     image: estebanmorenoit/ac-wotlk-client-data-playerbots:master
+    cpuset: *game-cpuset
     volumes:
       - ac-client-data:/azerothcore/env/dist/data
     networks:
@@ -42,6 +62,7 @@ services:
   ac-db-import:
     container_name: ac-db-import
     image: estebanmorenoit/ac-wotlk-db-import-playerbots:master
+    cpuset: *game-cpuset
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
       AC_WORLD_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_world"
@@ -59,6 +80,7 @@ services:
     container_name: ac-authserver
     image: estebanmorenoit/ac-wotlk-authserver-playerbots:master
     restart: unless-stopped
+    cpuset: *game-cpuset
     environment:
       AC_LOGIN_DATABASE_INFO: "ac-database;3306;root;${DB_ROOT_PASSWORD:-password};acore_auth"
     volumes:
@@ -86,6 +108,12 @@ services:
     # isn't scarce here (host has ~19GB free at typical load) — 12g is well
     # above any observed usage (peaked ~4.5GB even with 4x the bots), just a
     # backstop against a genuine leak rather than a real constraint.
+    # cpuset (see ac-database above for the full rationale) makes that 3-of-4
+    # a hard reservation instead of just a self-imposed ceiling — the ~30
+    # unrelated containers are confined to thread 0 so they can't invade the
+    # threads reserved here, unlike `cpus:` alone which never stopped them
+    # from competing for the same cores.
+    cpuset: *game-cpuset
     deploy:
       resources:
         limits:
@@ -118,9 +146,20 @@ services:
       # by this. Was bumped to 300 at some point without updating the limits
       # below; on this 4-thread host that alone pushed worldserver to ~236%
       # CPU with the host load average sustained above its thread count.
-      # Dropped back down given this box also runs ~30 unrelated containers.
-      AC_AI_PLAYERBOT_MIN_RANDOM_BOTS: "75"
-      AC_AI_PLAYERBOT_MAX_RANDOM_BOTS: "75"
+      # Dropped to 75, but that still measured 150-230% worldserver CPU and
+      # host-wide CPU pressure (/proc/pressure/cpu) at 22-30% "some" stall —
+      # real contention, not just a busy number — on a host that also runs
+      # Turbo Boost permanently disabled (thermal-limited NUC, see
+      # /etc/systemd/system/cpu-no-turbo.service) and ~30 unrelated
+      # containers. Tried 50 (Prometheus-measured, not just docker-stats
+      # snapshots): worldserver only dropped ~203%->181% and host-wide
+      # 81%->75% — most of worldserver's cost is fixed overhead (tick loop,
+      # map updates, DB polling, LLM chatter bridge), not bot-count-
+      # proportional; measured marginal cost is closer to ~0.009 cores/bot,
+      # not the ~0.029 naively implied by total/count. Testing 100 next to
+      # confirm that marginal-cost model before settling on a number.
+      AC_AI_PLAYERBOT_MIN_RANDOM_BOTS: "100"
+      AC_AI_PLAYERBOT_MAX_RANDOM_BOTS: "100"
       # Idles all random bots out when no real player is connected instead of
       # simulating 75 bots' AI/pathing 24/7 — this alone was measured pinning
       # worldserver at ~193% CPU on this 4-thread host even with nobody
@@ -129,9 +168,24 @@ services:
       # the last one disconnects — both stock module defaults.
       AC_AI_PLAYERBOT_DISABLED_WITHOUT_REAL_PLAYER: "1"
       AC_AI_PLAYERBOT_SYNC_LEVEL_WITH_PLAYERS: "1"
+      # Tested "0" (2026-09-13) on the theory that concentrating bots onto
+      # your zone piles them all onto that Map's single update thread
+      # (AzerothCore parallelizes per-Map, not within a Map — see
+      # MapUpdater::schedule_update). Measured: worldserver CPU dropped
+      # ~164%->146%, but CPU pressure stall (/proc/pressure/cpu, the actual
+      # lag indicator) stayed ~23% either way, and the three map-update
+      # worker threads showed near-identical cumulative ticks in both cases —
+      # no evidence of genuine multi-map parallelism, just a bit less total
+      # work. Reverted to "1": not worth losing bots visible near you for a
+      # change that didn't move the metric that actually matters.
       AC_AI_PLAYERBOT_RANDOM_BOT_CONCENTRATE_IN_PLAYER_ZONE: "1"
-      # Greet disabled: mod-llm-chatter replaces built-in bot chat (see below).
-      AC_AI_PLAYERBOT_ENABLE_GREET: "0"
+      # Temporarily "1" (2026-09-13): mod-llm-chatter normally replaces this,
+      # but the bridge hit Gemini's free-tier daily quota (500
+      # requests/day, GenerateRequestsPerDayPerProjectPerModel-FreeTier) and
+      # is crash-looping on its own health check until the quota resets at
+      # midnight Pacific. Set back to "0" once LLM chat is confirmed working
+      # again.
+      AC_AI_PLAYERBOT_ENABLE_GREET: "1"
       # Per-bot AI cost per tick (core default is 10). Total AI cost scales as
       # bots x IterationsPerTick; this host is 4 threads shared with other
       # services, so bot count and iterations are balanced together rather
@@ -180,6 +234,7 @@ services:
   # deploy.sh adds --profile llm-chatter automatically once you give it a key.
   ac-llm-chatter-bridge:
     container_name: ac-llm-chatter-bridge
+    cpuset: *game-cpuset
     build:
       context: https://github.com/Hokken/mod-llm-chatter.git#master:tools
       dockerfile_inline: |
@@ -222,14 +277,45 @@ services:
     container_name: ac-wake-proxy
     build: ./wake-proxy
     restart: unless-stopped
+    cpuset: *game-cpuset
     environment:
       DB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:-password}"
+      BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-30}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/home/esteban/azerothcore-playerbots:ro
+      # Same directory backup.sh writes to on the host — see run_backup()
+      # in wake_proxy.py. Read-write, unlike the deploy-dir mount above.
+      - ../wow-server-playerbots/backups:/backups
     ports:
       - "3724:3724"
       - "8085:8085"
+    networks:
+      - ac-network
+
+  # Always-on (like wake-proxy) so it still shows something — last known
+  # numbers, marked stale — while the game stack is asleep, which is most
+  # of the day. No docker.sock: connects to ac-database directly over
+  # ac-network, so a failed connection IS the "asleep" signal, rather than
+  # needing control over sibling containers the way wake-proxy does.
+  status-page:
+    container_name: ac-status-page
+    build: ./status-page
+    restart: unless-stopped
+    cpuset: "0"
+    environment:
+      DB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:-password}"
+    volumes:
+      - ac-status-cache:/data
+      # Read-only: lets the page show the real, currently-running XP rate
+      # instead of a hardcoded number that would silently drift the next
+      # time someone tunes rates in worldserver.conf.
+      - ./env/dist/etc/worldserver.conf:/worldserver.conf:ro
+      # Read-only: wake-proxy (read-write, see its own volumes below) writes
+      # sessions.json here — see wake_proxy.py's record_session().
+      - ../wow-server-playerbots/backups:/backups:ro
+    ports:
+      - "8090:8090"
     networks:
       - ac-network
 
@@ -239,3 +325,4 @@ networks:
 volumes:
   ac-mysql-data:
   ac-client-data:
+  ac-status-cache:

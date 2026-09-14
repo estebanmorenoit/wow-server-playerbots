@@ -11,7 +11,7 @@ Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** 
 
 Not affiliated with Blizzard Entertainment. For personal/private-server use.
 
-[MIT](./LICENSE) covers what's actually authored in this repo — `deploy.sh`, `backup.sh`, `wake-proxy/`, `docker-compose.yml`, this README. It does *not* cover AzerothCore or the nine modules, which `deploy.sh` clones separately at deploy time straight from their own repos, each under its own license (mostly AGPL-3.0/GPL-2.0) — check those repos directly if that matters for your use case.
+[MIT](./LICENSE) covers what's actually authored in this repo — `deploy.sh`, `backup.sh`, `wake-proxy/`, `docker-compose.yml`, this README. It does *not* cover AzerothCore or the ten modules, which `deploy.sh` clones separately at deploy time straight from their own repos, each under its own license (mostly AGPL-3.0/GPL-2.0) — check those repos directly if that matters for your use case.
 
 ## Contents
 
@@ -57,21 +57,22 @@ graph LR
 | [mod-cfbg](https://github.com/azerothcore/mod-cfbg) | Cross-faction battlegrounds, so the fixed bot population fills PvP queues |
 | [mod-account-achievements](https://github.com/azerothcore/mod-account-achievements) | Shares achievement progress across every character on your account |
 | [mod-instance-reset](https://github.com/azerothcore/mod-instance-reset) | Reset your own dungeon/raid lockouts on demand — [setup](#instance-reset) |
+| [mod-random-enchants](https://github.com/azerothcore/mod-random-enchants) | Chance of bonus random enchantments on looted/quest/crafted/rolled items — [details](#random-enchants) |
 
 ---
 
 ## Prebuilt images
 
-The C++ side (core + all nine modules) is baked into these images — no build toolchain needed to run the server:
+The C++ side (core + all ten modules) is baked into these images — no build toolchain needed to run the server:
 
 | Image | Purpose |
 |---|---|
-| `estebanmorenoit/ac-wotlk-worldserver-playerbots` | World server (game logic), all nine modules built in |
+| `estebanmorenoit/ac-wotlk-worldserver-playerbots` | World server (game logic), all ten modules built in |
 | `estebanmorenoit/ac-wotlk-authserver-playerbots` | Auth/login server (port 3724) |
 | `estebanmorenoit/ac-wotlk-db-import-playerbots` | One-shot DB bootstrap/migration (runs before the servers) |
 | `estebanmorenoit/ac-wotlk-client-data-playerbots` | One-shot client data extraction (maps/vmaps/mmaps/dbc) |
 
-All four are built from the same `apps/docker/Dockerfile` (different `target` per service), from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow — `build-images.yml`, manual `workflow_dispatch` trigger only, never runs on push. That workflow checks out all nine modules explicitly (`modules/*` is gitignored in the core repo by design) and patches a known upstream compile bug in mod-llm-chatter before building.
+All four are built from the same `apps/docker/Dockerfile` (different `target` per service), from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow — `build-images.yml`, manual `workflow_dispatch` trigger only, never runs on push. That workflow checks out all ten modules explicitly (`modules/*` is gitignored in the core repo by design) and patches a known upstream compile bug in mod-llm-chatter before building.
 
 Each new module gets its own image tag while under test, rather than overwriting `:master` directly — once verified working (as `:quest-loot-fix-test` was, live, tonight), it gets promoted *to* `:master`, which is what's actually deployed now. `:instance-reset-test`, `:cfbg-achievements-test`, `:npc-buffer-test`, `:progression-test`, and `:ahbot-test` remain in `docker-compose.yml`'s history as earlier known-good states if a rollback is ever needed.
 
@@ -153,12 +154,14 @@ If chat is enabled, check it actually worked: `docker logs ac-llm-chatter-bridge
 
 ### Playerbots
 
-Bot behavior lives in `ac-worldserver`'s environment variables in [`docker-compose.yml`](./docker-compose.yml). Current tuning, sized for this host (4 threads, shared with ~30 unrelated containers, 2 of them hyperthreaded physical cores):
+Bot behavior lives in `ac-worldserver`'s environment variables in [`docker-compose.yml`](./docker-compose.yml). Current tuning, sized for this host (2 physical cores / 4 threads — 0+2 share one core, 1+3 the other, per `lscpu -e` — shared with ~30 unrelated containers running other self-hosted services):
 
-- **75 random bots** — ambient world population, leveled to match real players, clustered near player zones. This is separate from bots you recruit into your own party.
+- **100 random bots** — ambient world population, leveled to match real players, clustered near player zones. This is separate from bots you recruit into your own party. Measured on this host: bot count in the 50-100 range didn't cleanly track CPU cost (most of `ac-worldserver`'s cost is fixed overhead — tick loop, map updates, DB polling, the LLM chatter bridge — not bot-count-proportional), so this is sized for a fuller world rather than a strict CPU ceiling.
 - **6 AI iterations/tick** (core default is 10) — per-bot AI cost cut for CPU headroom.
 - `ac-worldserver` itself is capped at **3 CPUs / 12GB** via `deploy.resources.limits`, so it can't starve the rest of the host.
-- `AC_MAP_UPDATE_THREADS=3` spreads map/world ticks across those same 3 cores.
+- **`cpuset: "1,2,3"` on every game-stack service** (`ac-database`, `ac-authserver`, `ac-worldserver`, `ac-llm-chatter-bridge`, `wake-proxy`, plus the one-shot init containers) reserves that same 3-of-4 as a *hard* boundary, not just a self-imposed ceiling — the other ~30 containers on this host were pinned live to thread 0 only (`docker update --cpuset-cpus=0`, not tracked in this repo since those containers belong to other projects), so they can no longer invade the threads reserved for the game.
+- `AC_MAP_UPDATE_THREADS=3` spreads map/world ticks across those same 3 threads — though AzerothCore parallelizes per-*map*, not within one, so a single hot continent (e.g. everyone clustered near you) is still bound to one thread's clock speed regardless of how many are reserved. Tested disabling `AC_AI_PLAYERBOT_RANDOM_BOT_CONCENTRATE_IN_PLAYER_ZONE` to spread bots onto other maps and actually use that parallelism — it cut `ac-worldserver`'s own CPU (~164%→146%) but didn't move CPU pressure stall (the real contention/lag indicator, ~23% either way), so it was reverted: not worth losing bots visible near you for a change that didn't fix the felt lag.
+- Turbo Boost is permanently disabled host-wide (`/etc/systemd/system/cpu-no-turbo.service`) — this is a thermal decision (package temp sits at 85-88°C even without it), not something this project's tuning should try to override.
 - Built-in bot greet is disabled — mod-llm-chatter replaces it.
 - mod-llm-chatter's DB poll interval is 10s (default is 1s) — a 1s loop was measurable CPU for a queue that's rarely hot.
 
@@ -246,6 +249,10 @@ Talk to an NPC to reset your own dungeon/raid lockouts on demand instead of wait
 
 It **won't reset the instance you're currently standing in** — leave it first, then talk to the NPC. Configurable in `env/dist/etc/modules/instance-reset.conf` — `TransactionType` can charge money and/or a token (1/2/3) instead of free (0).
 
+### Random Enchants
+
+Chance of a bonus enchantment (or two, or three) on items you loot, get from quest rewards, craft via professions, or win from a group roll — stacks on top of the item's normal stats rather than replacing them. Ships **enabled**, but tuned down from upstream's defaults: the `.dist` template's 70%/65%/60% chances would enchant most eligible items, which reads as "every drop is special" rather than an occasional treat, so `deploy.sh` sets these to 15%/10%/5% on first deploy (≈15% chance of one enchant, ≈1.5% of two, ≈0.075% of three). Configurable in `env/dist/etc/modules/random_enchants.conf` — also toggles which sources apply (`RandomEnchants.OnLoot`/`OnCreate`/`OnQuestReward`/`OnGroupRoll`) and the login announcement message.
+
 ---
 
 ## GM commands reference (this build)
@@ -324,6 +331,9 @@ A cron job (installed automatically by `deploy.sh`) runs it daily at 04:00:
 ```
 0 4 * * * /home/esteban/wow-server-playerbots/backup.sh >> /home/esteban/wow-server-playerbots/backups/backup.log 2>&1
 ```
+If the [auto-sleep](#auto-sleep--wake-on-connect) has stopped the stack (the normal state most of the day), `backup.sh` wakes just `ac-database` for the duration of the dump and puts it back to sleep afterward — a fixed-time cron would otherwise fail on any night nobody's playing at 04:00.
+
+That fixed-time gap is also why `wake-proxy` takes its own backup right before it puts the stack to sleep (see [Auto-sleep](#auto-sleep--wake-on-connect)) — one dump per play session, into the same `backups/` directory, rather than relying on a single daily snapshot that might land hours away from when the data last changed. The 04:00 cron stays in place as a safety net for days nobody plays at all.
 
 Restore a dump:
 ```bash
@@ -337,13 +347,23 @@ These are local backups only — if the disk itself is lost, they're gone too. C
 The `wake-proxy` service ([`wake-proxy/wake_proxy.py`](./wake-proxy/wake_proxy.py)) lets the whole game stack sit fully stopped between play sessions — no idle CPU/heat/fan noise from `ac-worldserver` running an empty world 24/7 — while staying reachable on demand:
 
 - **Wake:** it's the only service that's always running, holding the real public `3724`/`8085` ports. The moment a WoW client tries to connect, if the real backend isn't up, it runs `docker compose up -d` and holds the connection until the backend is ready (~60-70s measured cold-boot time), then relays transparently. Once the backend is warm, it's a pure passthrough with no overhead.
-- **Sleep:** it also watches `characters.online` in the database. 15 minutes after the last real player disconnects (not AFK — this is disconnect-based, since there's no reliable "idle but connected" signal without extra hooks), it stops `ac-worldserver`/`ac-authserver`/`ac-database`/`ac-llm-chatter-bridge` — itself excluded, so it's always there for the next wake.
+- **Sleep:** it also watches `characters.online` in the database. 15 minutes after the last real player disconnects (not AFK — this is disconnect-based, since there's no reliable "idle but connected" signal without extra hooks), it backs up the database (see below) and stops `ac-worldserver`/`ac-authserver`/`ac-database`/`ac-llm-chatter-bridge` — itself excluded, so it's always there for the next wake.
+- **Backup-before-sleep:** right before stopping `ac-database`, `run_backup()` in `wake_proxy.py` dumps every database to `backups/` (same directory and format as [`backup.sh`](./backup.sh) — one shared pool, either restore procedure works on either's output) using stdlib `gzip` rather than a piped binary, keeping the container dependency-free. This means a fresh backup happens once per play session, not just at the fixed 04:00 cron — see [Backups](#backups) for why the cron alone wasn't reliable given this stack sleeps most of the day.
+- **Session recording:** the same idle-watcher loop tracks each session's start/end, peak population, and AH economy delta, writing one record to `backups/sessions.json` per session (`record_session()`) — see [Realm status page](#realm-status-page) for why this is session-based rather than a fixed-interval sample.
 
 **Known limitation:** because cold boot takes ~60-70s and the WoW 3.3.5a client's own connection timeout is shorter than that, your *first* connection attempt after the stack has slept will likely show a connection error while it boots in the background. Just retry a minute later — the client will connect immediately from then on. There's no clean fix for this without spoofing the auth protocol itself, which isn't worth the fragility for a once-per-session inconvenience.
 
 **Fixed bug (see [Known issues](#known-issues)):** an earlier version disconnected the client specifically at "Enter World" — `socket.create_connection(..., timeout=BACKEND_CONNECT_TIMEOUT)`'s timeout stays active on the returned socket for every subsequent `recv()`, not just the connection attempt, so any >2s gap in the backend's data stream (easily hit by the burst of world state sent on entering, under this host's CPU constraints) raised `socket.timeout` — an `OSError` subclass — which the relay's `except OSError: pass` treated as a dead connection and tore down both sockets. Quick exchanges (auth, character list) stayed under 2s, which is why only world-entry broke. Fixed with an explicit `backend.settimeout(None)` after connecting.
 
 It needs the host's Docker socket mounted to control sibling containers (`docker compose` runs *inside* the `wake-proxy` container, against the host's Docker daemon — "docker outside of docker", not real DinD) and this directory bind-mounted at the exact same absolute path it lives at on the host, since this compose file's relative volume mounts get resolved against that path and then applied by the *host's* dockerd — a mismatched path would silently break `ac-authserver`/`ac-worldserver`'s config/log mounts the next time `wake-proxy` starts them. Both are handled automatically by the `wake-proxy` service definition in `docker-compose.yml` — nothing extra to set up on a fresh deploy.
+
+### Realm status page
+
+A small always-on page at `http://<this-host>:8090` — population, character/guild counts, and Auction House stats (listings, total gold), read straight from `ac-database`. Same always-on tier as `wake-proxy` (also survives the game stack sleeping), but deliberately **doesn't** get Docker socket access the way `wake-proxy` does: it only ever needs read access to the database, so a failed connection *is* the "asleep" signal, rather than needing control over sibling containers to know that. When asleep, it falls back to the last successful query's numbers (cached to the `ac-status-cache` volume) rather than showing nothing, clearly marked as stale.
+
+[`status-page/status_page.py`](./status-page/status_page.py) — stdlib `http.server`, one non-stdlib dependency (`pymysql`, pure-Python, no compiled extension) to talk to MySQL directly over `ac-network` instead of shelling out to `docker exec` the way `wake-proxy` does. Pinned to thread 0 (`cpuset: "0"`, the non-game reservation — see [Playerbots](#playerbots)) since it's a light, infrequent-query service with no reason to compete for the game's reserved cores. Also shows a dynamic "Real Players" list (any character on a non-`RNDBOT%` account with >60s playtime — no hardcoded names, picks up every alt automatically) and a "Recent Auction Sales" feed built from AzerothCore's own auction mail encoding (`item_template:0:response:auctionId:itemCount` in `mail.subject` — see `fetch_recent_sales`), not a custom log.
+
+**Session history, not a time-sampled trend:** this host only runs 1-2h/day, so a fixed-interval sampler (e.g. every 5 minutes) would spend the vast majority of its points on "asleep" — and worse, a line chart connecting the last point before sleep to the first point after would draw a smooth line implying continuous change through 20+ idle hours that never happened. Instead, `wake-proxy`'s idle-watcher loop (which already knows exactly when a session starts and ends) records one summary per play session — start time, duration, peak population, AH gold/listings delta — to `backups/sessions.json` (see `record_session()` in [`wake-proxy/wake_proxy.py`](./wake-proxy/wake_proxy.py)). `status-page` mounts that same file read-only and renders it as a session list (`/api/sessions`) plus two cumulative stats (total sessions, longest session) rather than a graph.
 
 ### Monitoring
 
@@ -375,8 +395,9 @@ The Docker images are portable — the state and secrets are not:
    docker exec -i ac-database mysql -u root -p"$DB_ROOT_PASSWORD" < wow-server-backup.sql
    ```
 3. **Copy secrets out-of-band** (SCP, not git): `env/dist/etc/modules/mod_llm_chatter.conf` (has your real LLM API key) and the real `DB_ROOT_PASSWORD` — neither belongs in this repo.
-4. **Re-check bot count against the new host's core count.** 75 bots at 6 iterations/tick used ~2 cores on the original box — that's what the `cpus: "3.0"` cap was sized around. A more powerful host has headroom to raise `AC_AI_PLAYERBOT_MAX_RANDOM_BOTS` (and `ITERATIONS_PER_TICK` back toward the default of 10) — just raise the `cpus`/`memory` limits to match. mod-playerbots auto-provisions however many `RNDBOT` accounts the new bot count needs, so there's no separate account-count step.
-5. **Open port 3724** (and 8085 for direct world-server access) in the new host's firewall/router, then update `realmlist.wtf` on any client.
+4. **Re-check bot count against the new host's core count.** 100 bots at 6 iterations/tick used ~1.5-2 cores on the original box (2 physical cores / 4 threads) — that's what the `cpus: "3.0"` cap was sized around. A more powerful host has headroom to raise `AC_AI_PLAYERBOT_MAX_RANDOM_BOTS` (and `ITERATIONS_PER_TICK` back toward the default of 10) — just raise the `cpus`/`memory` limits to match. mod-playerbots auto-provisions however many `RNDBOT` accounts the new bot count needs, so there's no separate account-count step.
+5. **Update or remove `cpuset: "1,2,3"`.** Every game-stack service in `docker-compose.yml` hardcodes this CPU pin, sized for the original host's exact 4-thread layout (see the [Playerbots](#playerbots) section). A different host will have different CPU ids available — `docker compose up -d` will fail outright if id 2 or 3 doesn't exist, or silently misbehave if it does but means something different. Re-derive the pin from the new host's own `lscpu -e` output, or delete the `cpuset` lines entirely if you don't need the hard reservation there.
+6. **Open port 3724** (and 8085 for direct world-server access) in the new host's firewall/router, then update `realmlist.wtf` on any client.
 
 ---
 
@@ -384,15 +405,6 @@ The Docker images are portable — the state and secrets are not:
 
 **wake-proxy disconnected clients at "Enter World" (fixed):** [`wake-proxy/wake_proxy.py`](./wake-proxy/wake_proxy.py)'s relay connected to the backend with `socket.create_connection(..., timeout=BACKEND_CONNECT_TIMEOUT)` — that timeout is meant only for the connection attempt, but Python leaves it active on the returned socket for every subsequent call. Any gap longer than `BACKEND_CONNECT_TIMEOUT` (2s) between packets during relaying raised `socket.timeout` (an `OSError` subclass), which the relay's `except OSError: pass` silently treated as a dead connection, tearing down both sockets. Auth and character-list exchanges are quick enough to dodge this; the data burst on actually entering the world reliably wasn't, especially under this host's CPU constraints — so every login got through character select and died right at "Enter World." Reproduced across two different worldserver image tags with the proxy as the only common factor, confirming it wasn't a build issue. Fixed with an explicit `backend.settimeout(None)` right after connecting, before the relay threads start.
 
-**mod-llm-chatter compile bug (fixed locally):** as of the commit this was built against, `LLMChatterShared.cpp`'s `SendPartyMessageInstant` calls `ChatHandler::BuildChatPacket()` with an argument order from an older AzerothCore signature, failing to compile (`fatal error: no matching function for call to 'BuildChatPacket'`). Fix (matches the pattern used elsewhere in the module and core, e.g. `Player.cpp`'s `Say`/`Yell`):
-
-```cpp
-// before (broken):
-ChatHandler::BuildChatPacket(data, CHAT_MSG_PARTY, message, LANG_UNIVERSAL,
-                              CHAT_TAG_NONE, bot->GetGUID(), bot->GetName());
-
-// after (matches current core signature):
-ChatHandler::BuildChatPacket(data, CHAT_MSG_PARTY, LANG_UNIVERSAL, bot, bot, message);
-```
+**mod-llm-chatter compile bug (fixed upstream as of 2026-09-14):** `LLMChatterShared.cpp`'s `SendPartyMessageInstant` used to call `ChatHandler::BuildChatPacket()` with an argument order from an older AzerothCore signature, failing to compile (`fatal error: no matching function for call to 'BuildChatPacket'`). The build workflow carried a patch step (`apps/docker/patch-llm-chatter.py`) working around it — that step started failing loudly (by design: it asserts exactly one match before patching) once upstream fixed the call themselves, matching the correct 8-argument overload this core actually declares. Removed the now-unnecessary patch step from `build-images.yml`; the script itself stays in the repo, unused, in case this ever regresses.
 
 Check if upstream has merged a fix before you build; if not, patch it yourself the same way. The build workflow already applies this automatically via `apps/docker/patch-llm-chatter.py`.
