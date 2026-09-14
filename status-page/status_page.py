@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+"""Small always-on status page for the WoW server — population, economy,
+world composition, and every actually-played real character, queried live from
+ac-database over the network.
+
+Deliberately has no docker.sock access (unlike wake-proxy): "online" is
+derived from the database being reachable AND authserver/worldserver
+actually accepting TCP connections (a plain socket check over ac-network,
+not container inspection) — the database alone isn't proof a player could
+log in, since it can be up by itself (e.g. woken for maintenance) while
+the rest of the stack stays stopped or is still booting. Either check
+failing falls back to the last successful query's numbers (cached to
+disk) rather than showing nothing.
+
+Session/economy history is tracked by wake-proxy, not here — see
+SESSIONS_FILE below.
+"""
+import json
+import os
+import re
+import socket
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pymysql
+
+DB_HOST = os.environ.get("DB_HOST", "ac-database")
+DB_PORT = int(os.environ.get("DB_PORT", "3306"))
+DB_USER = os.environ.get("DB_USER", "root")
+DB_PASSWORD = os.environ.get("DB_ROOT_PASSWORD", "password")
+DB_CONNECT_TIMEOUT = 3.0
+PORT_CHECK_TIMEOUT = 2.0
+
+CACHE_FILE = "/data/last_stats.json"
+WORLDSERVER_CONF = "/worldserver.conf"
+
+# Written by wake-proxy's record_session() (mounted read-only here — see
+# docker-compose.yml) — one entry per play session (start/end, peak
+# population, AH delta), not a fixed-interval sample. This host only runs
+# 1-2h/day, so a time-based sampler would spend nearly all its points on
+# "asleep," and connecting across that gap with a line chart would imply
+# continuous change through 20+ idle hours that never actually happened.
+SESSIONS_FILE = "/backups/sessions.json"
+
+# AzerothCore's own enum (src/server/game/Mails/Mail.h) and auction mail
+# subject encoding (AuctionEntry::BuildAuctionMailSubject in
+# AuctionHouseMgr.cpp: "<item_template>:0:<response>:<auctionId>:<itemCount>",
+# a machine-readable string the real client parses locally — never meant to
+# be read directly, but exactly what we need here). response==2 is the
+# seller-side "your auction sold" notification, the only one that means a
+# completed sale rather than a bid, a win, or an expiry.
+MAIL_TYPE_AUCTION = 2
+AUCTION_SUCCESSFUL = 2
+
+# "Online" means a player could actually log in right now — the database
+# alone isn't enough proof of that (e.g. it can be woken by itself for
+# maintenance/backups while worldserver/authserver stay stopped). Checked
+# with a plain TCP connect over ac-network, not docker.sock, to keep this
+# container read-only with respect to the rest of the stack.
+GAME_PORTS = [("ac-authserver", 3724), ("ac-worldserver", 8085)]
+
+
+def game_ports_reachable() -> bool:
+    for host, port in GAME_PORTS:
+        try:
+            with socket.create_connection((host, port), timeout=PORT_CHECK_TIMEOUT):
+                pass
+        except OSError:
+            return False
+    return True
+
+
+def read_xp_rate() -> float | None:
+    """Reads the real, currently-running rate straight from worldserver's
+    own config, so this can never drift from what the server actually
+    does — unlike a rate hardcoded here at write time."""
+    try:
+        with open(WORLDSERVER_CONF) as f:
+            for line in f:
+                if line.strip().startswith("Rate.XP.Kill"):
+                    match = re.search(r"=\s*([\d.]+)", line)
+                    if match:
+                        return float(match.group(1))
+    except OSError:
+        pass
+    return None
+
+with open(os.path.join(os.path.dirname(__file__), "index.html")) as _f:
+    PAGE_HTML = _f.read()
+
+# WotLK race IDs -> faction. Public game data (not a Blizzard asset) — the
+# same enum every AzerothCore/TrinityCore install ships with.
+ALLIANCE_RACES = {1, 3, 4, 7, 11}  # Human, Dwarf, Night Elf, Gnome, Draenei
+HORDE_RACES = {2, 5, 6, 8, 10}  # Orc, Undead, Tauren, Troll, Blood Elf
+
+_cache_lock = threading.Lock()
+
+
+def log(msg: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def read_cache() -> dict | None:
+    try:
+        with open(CACHE_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def write_cache(stats: dict) -> None:
+    with _cache_lock:
+        try:
+            os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+            tmp = CACHE_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(stats, f)
+            os.replace(tmp, CACHE_FILE)
+        except OSError as exc:
+            log(f"failed writing cache: {exc}")
+
+
+def read_sessions() -> list[dict]:
+    try:
+        with open(SESSIONS_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _one(cur, query: str):
+    cur.execute(query)
+    row = cur.fetchone()
+    return row
+
+
+def fetch_recent_sales(cur, limit: int = 10) -> list[dict]:
+    cur.execute(
+        """
+        SELECT subject, money, deliver_time
+        FROM acore_characters.mail
+        WHERE messageType = %s
+        ORDER BY deliver_time DESC
+        LIMIT 200
+        """,
+        (MAIL_TYPE_AUCTION,),
+    )
+    sales = []
+    item_entries = set()
+    parsed = []
+    for row in cur.fetchall():
+        # subject format: "<item_template>:0:<response>:<auctionId>:<itemCount>"
+        parts = (row["subject"] or "").split(":")
+        if len(parts) < 5:
+            continue
+        try:
+            item_entry, _, response, _, item_count = (int(p) for p in parts[:5])
+        except ValueError:
+            continue
+        if response != AUCTION_SUCCESSFUL:
+            continue
+        parsed.append({"item_entry": item_entry, "item_count": item_count, **row})
+        item_entries.add(item_entry)
+        if len(parsed) >= limit:
+            break
+
+    names = {}
+    if item_entries:
+        placeholders = ",".join(["%s"] * len(item_entries))
+        cur.execute(
+            f"SELECT entry, name FROM acore_world.item_template WHERE entry IN ({placeholders})",
+            tuple(item_entries),
+        )
+        names = {r["entry"]: r["name"] for r in cur.fetchall()}
+
+    for p in parsed:
+        sales.append(
+            {
+                "item_name": names.get(p["item_entry"], f"Item #{p['item_entry']}"),
+                "item_count": p["item_count"],
+                "gold": p["money"] // 10000 if p["money"] else 0,
+                "sold_at": p["deliver_time"],
+            }
+        )
+    return sales
+
+
+def query_live_stats() -> dict:
+    conn = pymysql.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        connect_timeout=DB_CONNECT_TIMEOUT,
+        read_timeout=DB_CONNECT_TIMEOUT,
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+    try:
+        with conn.cursor() as cur:
+            totals = _one(
+                cur,
+                """
+                SELECT
+                  (SELECT COUNT(*) FROM acore_characters.characters WHERE online = 1) AS online_now,
+                  (SELECT COUNT(*) FROM acore_characters.characters c
+                     JOIN acore_auth.account a ON a.id = c.account
+                     WHERE c.online = 1 AND a.username LIKE 'RNDBOT%%') AS active_bots,
+                  (SELECT COUNT(*) FROM acore_characters.characters) AS total_characters,
+                  (SELECT COUNT(*) FROM acore_characters.guild) AS guilds,
+                  (SELECT COUNT(*) FROM acore_characters.auctionhouse) AS ah_listings,
+                  (SELECT COALESCE(ROUND(SUM(buyoutprice) / 10000), 0) FROM acore_characters.auctionhouse) AS ah_gold,
+                  (SELECT COUNT(*) FROM acore_auth.account) AS accounts,
+                  (SELECT COALESCE(ROUND(SUM(totaltime) / 3600), 0) FROM acore_characters.characters) AS world_playtime_hours,
+                  (SELECT MIN(joindate) FROM acore_auth.account WHERE username NOT LIKE 'RNDBOT%%') AS realm_founded,
+                  (SELECT MAX(c.logout_time) FROM acore_characters.characters c
+                     JOIN acore_auth.account a ON a.id = c.account
+                     WHERE a.username NOT LIKE 'RNDBOT%%') AS last_player_activity,
+                  (SELECT SUM(level BETWEEN 1 AND 19) FROM acore_characters.characters) AS lvl_1_19,
+                  (SELECT SUM(level BETWEEN 20 AND 39) FROM acore_characters.characters) AS lvl_20_39,
+                  (SELECT SUM(level BETWEEN 40 AND 59) FROM acore_characters.characters) AS lvl_40_59,
+                  (SELECT SUM(level BETWEEN 60 AND 79) FROM acore_characters.characters) AS lvl_60_79,
+                  (SELECT SUM(level >= 80) FROM acore_characters.characters) AS lvl_80_plus
+                """,
+            )
+            totals["xp_rate"] = read_xp_rate()
+
+            # Class distribution (WotLK class IDs 1-9, 11 — no 10).
+            cur.execute("SELECT class, COUNT(*) AS n FROM acore_characters.characters GROUP BY class")
+            class_counts = {str(r["class"]): r["n"] for r in cur.fetchall()}
+
+            # Faction split, derived from per-race counts in Python rather
+            # than a SQL CASE, to keep the race->faction mapping in one place.
+            cur.execute("SELECT race, COUNT(*) AS n FROM acore_characters.characters GROUP BY race")
+            alliance = horde = 0
+            for r in cur.fetchall():
+                if r["race"] in ALLIANCE_RACES:
+                    alliance += r["n"]
+                elif r["race"] in HORDE_RACES:
+                    horde += r["n"]
+
+            # Every actually-played character on a non-RNDBOT account —
+            # generic on purpose, so any real player (not a specific
+            # hardcoded name), including every alt on the same account,
+            # shows up automatically as soon as they've played at all. That
+            # floor (60s) exists only to filter out mod-ah-bot's own service
+            # account, which technically isn't a RNDBOT% account either but
+            # never accumulates more than a few seconds of real playtime —
+            # kept low deliberately so a fresh alt shows up almost
+            # immediately rather than waiting on an arbitrary "played long
+            # enough" bar.
+            cur.execute(
+                """
+                SELECT c.name, c.race, c.class, c.level,
+                       ROUND(c.totaltime / 3600, 1) AS playtime_hours
+                FROM acore_characters.characters c
+                JOIN acore_auth.account a ON a.id = c.account
+                WHERE a.username NOT LIKE 'RNDBOT%%' AND c.totaltime > 60
+                ORDER BY c.totaltime DESC
+                LIMIT 10
+                """
+            )
+            real_players = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT g.name, COUNT(gm.guid) AS members
+                FROM acore_characters.guild g
+                JOIN acore_characters.guild_member gm ON gm.guildid = g.guildid
+                GROUP BY g.guildid
+                ORDER BY members DESC
+                LIMIT 5
+                """
+            )
+            top_guilds = cur.fetchall()
+
+            recent_sales = fetch_recent_sales(cur)
+
+        # Pop the raw bucket columns out of `totals` before spreading it
+        # below, so they only ever appear nested under level_buckets.
+        level_buckets = {
+            "1-19": totals.pop("lvl_1_19"),
+            "20-39": totals.pop("lvl_20_39"),
+            "40-59": totals.pop("lvl_40_59"),
+            "60-79": totals.pop("lvl_60_79"),
+            "80+": totals.pop("lvl_80_plus"),
+        }
+
+        result = {
+            **totals,
+            "class_counts": class_counts,
+            "faction": {"alliance": alliance, "horde": horde},
+            "level_buckets": level_buckets,
+            "top_guilds": top_guilds,
+            "real_players": real_players,
+            "recent_sales": recent_sales,
+        }
+        return _decimals_to_int(result)
+    finally:
+        conn.close()
+
+
+def _decimals_to_int(obj):
+    """SUM()/ROUND() come back as decimal.Decimal via pymysql, and dates as
+    datetime — neither is JSON-serializable. Every number here is a whole
+    count or a rounded amount, so int() loses nothing real; dates become
+    ISO strings."""
+    import datetime
+    import decimal
+
+    if isinstance(obj, dict):
+        return {k: _decimals_to_int(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_decimals_to_int(v) for v in obj]
+    if isinstance(obj, decimal.Decimal):
+        return int(obj)
+    if isinstance(obj, (datetime.date, datetime.datetime)):
+        return obj.isoformat()
+    return obj
+
+
+def summarize_sessions() -> dict:
+    sessions = read_sessions()
+    if not sessions:
+        return {"total_sessions": 0, "longest_session_seconds": 0}
+    return {
+        "total_sessions": len(sessions),
+        "longest_session_seconds": max(s["duration_seconds"] for s in sessions),
+    }
+
+
+def get_stats() -> dict:
+    now = time.time()
+    # Independent of DB reachability — sessions.json is readable whether
+    # the realm's awake or asleep, so these show up either way.
+    session_summary = summarize_sessions()
+    try:
+        stats = query_live_stats()
+        if not game_ports_reachable():
+            log("DB is up but authserver/worldserver aren't accepting connections yet — not fully online")
+            raise RuntimeError("game ports not reachable")
+        stats.update(session_summary)
+        payload = {"status": "awake", "as_of": now, "stats": stats}
+        write_cache(payload)
+        return payload
+    except Exception as exc:  # pymysql raises its own exception types, plus the RuntimeError above
+        log(f"Realm not fully online (stack likely asleep or still booting): {exc}")
+        cached = read_cache()
+        if cached is None:
+            return {"status": "asleep", "as_of": now, "stats": None, **session_summary}
+        cached_stats = {**cached["stats"], **session_summary} if cached["stats"] else cached["stats"]
+        return {"status": "asleep", "as_of": now, "stats": cached_stats, "stats_as_of": cached["as_of"]}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        log(fmt % args)
+
+    def do_GET(self):
+        if self.path == "/api/stats":
+            body = json.dumps(get_stats()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/api/sessions":
+            body = json.dumps(read_sessions()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/":
+            body = PAGE_HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_HEAD(self):
+        if self.path == "/":
+            body = PAGE_HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+if __name__ == "__main__":
+    log("status-page listening on 0.0.0.0:8090")
+    ThreadingHTTPServer(("0.0.0.0", 8090), Handler).serve_forever()

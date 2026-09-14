@@ -2,7 +2,7 @@
 """Always-on TCP relay + idle-shutdown watcher for the WoW client ports.
 
 Runs as its own docker-compose service (`wake-proxy`), the only game-stack
-service that never gets stopped. Two jobs:
+service that never gets stopped. Three jobs:
 
 1. Relay: listens on the real public 3724 (auth) and 8085 (world). If the
    real backend container isn't up, triggers `docker compose up -d` and
@@ -11,7 +11,19 @@ service that never gets stopped. Two jobs:
 
 2. Idle watcher: every IDLE_CHECK_INTERVAL, checks how many characters are
    online. Once that's been 0 continuously for IDLE_THRESHOLD_SECONDS,
-   stops the other game services (not itself) via `docker compose stop`.
+   backs up the database (see run_backup — ac-database is still up at this
+   point, so this is cheaper than backup.sh's fixed-04:00 cron waking it
+   back up later) and stops the other game services (not itself) via
+   `docker compose stop`.
+
+3. Session recorder: the same idle-watcher loop tracks each play session's
+   start/end, peak population, and AH economy delta (see record_session),
+   writing one record per session to sessions.json rather than sampling on
+   a fixed interval — this host only runs 1-2h/day, so a time-based
+   sampler would spend nearly all its points on "asleep," and a naive line
+   chart connecting across that gap would draw a smooth line implying
+   continuous change through 20+ idle hours. status-page reads this same
+   file (mounted read-only there) to render session history.
 
 Needs the host's Docker socket mounted to control sibling containers, and
 the deploy directory mounted at the SAME absolute path it lives at on the
@@ -25,6 +37,8 @@ Deliberately stdlib-only (socket/threading/subprocess) — this is the one
 thing standing between "the game is reachable at all" and "nothing's
 listening", so it stays as simple and dependency-free as possible.
 """
+import gzip
+import json
 import os
 import socket
 import subprocess
@@ -54,6 +68,22 @@ IDLE_CHECK_INTERVAL = 60.0
 IDLE_THRESHOLD_SECONDS = 15 * 60
 
 DB_ROOT_PASSWORD = os.environ.get("DB_ROOT_PASSWORD", "password")
+
+# Same directory backup.sh writes to on the host (bind-mounted read-write
+# below) — one shared pool of dumps, one retention policy, either restore
+# procedure works on either's output.
+BACKUP_DIR = "/backups"
+
+# One record per play session (not a fixed-interval sampler): this host
+# only runs 1-2h/day, so a time-sampled trend would spend >95% of its
+# points on "asleep" and — worse — a naive line chart would connect the
+# last point before sleep to the first point after, drawing a smooth line
+# across a 20+ hour gap as if something changed continuously overnight.
+# status-page reads this same file (mounted read-only there) to render
+# session history instead.
+SESSIONS_FILE = f"{BACKUP_DIR}/sessions.json"
+SESSIONS_MAX = 200
+BACKUP_RETENTION_DAYS = int(os.environ.get("BACKUP_RETENTION_DAYS", "30"))
 
 _start_lock = threading.Lock()
 _last_start_attempt = 0.0
@@ -213,12 +243,111 @@ def online_character_count() -> int | None:
         return None
 
 
+def fetch_economy_snapshot() -> dict | None:
+    result = subprocess.run(
+        [
+            "docker", "exec", "ac-database", "mysql", "-uroot", f"-p{DB_ROOT_PASSWORD}",
+            "-N", "-B", "acore_characters", "-e",
+            "SELECT (SELECT COUNT(*) FROM auctionhouse), "
+            "(SELECT COALESCE(ROUND(SUM(buyoutprice) / 10000), 0) FROM auctionhouse);",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        log(f"[session] economy query failed: {result.stderr.strip()}")
+        return None
+    try:
+        listings, gold = result.stdout.strip().split("\t")
+        return {"ah_listings": int(listings), "ah_gold": int(gold)}
+    except (ValueError, IndexError):
+        return None
+
+
+def record_session(start_time: float, end_time: float, peak_population: int,
+                    start_econ: dict | None, end_econ: dict | None) -> None:
+    session = {
+        "started_at": start_time,
+        "ended_at": end_time,
+        "duration_seconds": round(end_time - start_time),
+        "peak_population": peak_population,
+    }
+    if start_econ and end_econ:
+        session["ah_gold_delta"] = end_econ["ah_gold"] - start_econ["ah_gold"]
+        session["ah_listings_delta"] = end_econ["ah_listings"] - start_econ["ah_listings"]
+
+    try:
+        sessions = []
+        if os.path.exists(SESSIONS_FILE):
+            with open(SESSIONS_FILE) as f:
+                sessions = json.load(f)
+        sessions.append(session)
+        sessions = sessions[-SESSIONS_MAX:]
+        tmp = SESSIONS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(sessions, f)
+        os.replace(tmp, SESSIONS_FILE)
+        log(f"[session] recorded: {session['duration_seconds']}s, peak population {peak_population}")
+    except (OSError, json.JSONDecodeError) as exc:
+        log(f"[session] failed to record: {exc}")
+
+
+def run_backup() -> None:
+    """Dump every database while ac-database is still up, right before the
+    idle-shutdown stops it. gzip via stdlib, not a piped `gzip` binary, to
+    keep this container dependency-free like the rest of the file."""
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    out_path = f"{BACKUP_DIR}/wow-backup-{timestamp}.sql.gz"
+    tmp_path = f"{out_path}.tmp"
+    log(f"[backup] dumping all databases to {out_path} before sleep ...")
+    result = subprocess.run(
+        [
+            "docker", "exec", "ac-database", "mysqldump", "-uroot", f"-p{DB_ROOT_PASSWORD}",
+            "--all-databases", "--single-transaction", "--quick",
+        ],
+        capture_output=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        log(f"[backup] mysqldump failed: {result.stderr.decode(errors='replace').strip()}")
+        return
+    try:
+        with gzip.open(tmp_path, "wb") as f:
+            f.write(result.stdout)
+        os.replace(tmp_path, out_path)
+        log(f"[backup] done: {out_path}")
+    except OSError as exc:
+        log(f"[backup] failed writing {out_path}: {exc}")
+        return
+
+    cutoff = time.time() - BACKUP_RETENTION_DAYS * 86400
+    try:
+        for name in os.listdir(BACKUP_DIR):
+            if name.startswith("wow-backup-") and name.endswith(".sql.gz"):
+                path = f"{BACKUP_DIR}/{name}"
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+                    log(f"[backup] pruned old backup {name}")
+    except OSError as exc:
+        log(f"[backup] pruning old backups failed: {exc}")
+
+
 def idle_watcher() -> None:
     idle_since: float | None = None
+    session_start_time: float | None = None
+    session_start_econ: dict | None = None
+    peak_population = 0
     while True:
         time.sleep(IDLE_CHECK_INTERVAL)
         if not container_running("ac-worldserver"):
+            # Also drop any in-progress session tracking — e.g. a redeploy
+            # recreating the container mid-session shouldn't produce a
+            # session record spanning the outage with a stale start time.
             idle_since = None
+            session_start_time = None
+            session_start_econ = None
+            peak_population = 0
             continue
 
         online = online_character_count()
@@ -226,6 +355,13 @@ def idle_watcher() -> None:
             continue
 
         if online > 0:
+            if session_start_time is None:
+                session_start_time = time.time()
+                session_start_econ = fetch_economy_snapshot()
+                peak_population = online
+                log(f"[session] started (population {online})")
+            else:
+                peak_population = max(peak_population, online)
             idle_since = None
             continue
 
@@ -240,7 +376,14 @@ def idle_watcher() -> None:
             log(f"[idle] 0 players online — idle for {idle_for:.0f}s (threshold {IDLE_THRESHOLD_SECONDS:.0f}s)")
             continue
 
-        log(f"[idle] idle for {idle_for:.0f}s — stopping game stack (leaving wake-proxy up)")
+        log(f"[idle] idle for {idle_for:.0f}s — backing up before stopping game stack")
+        if session_start_time is not None:
+            record_session(session_start_time, time.time(), peak_population, session_start_econ, fetch_economy_snapshot())
+            session_start_time = None
+            session_start_econ = None
+            peak_population = 0
+        run_backup()
+        log("[idle] stopping game stack (leaving wake-proxy up)")
         result = compose("stop", *GAME_SERVICES, timeout=90)
         if result.returncode != 0:
             log(f"[idle] docker compose stop failed: {result.stderr.strip()}")

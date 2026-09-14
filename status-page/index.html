@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Realm Status</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0e1a;
+    --bg-2: #0f1326;
+    --panel: #171b30;
+    --panel-2: #1c2138;
+    --border: #2a2f4a;
+    --gold: #d4af6a;
+    --gold-dim: #a5854f;
+    --text: #e8e6f0;
+    --text-dim: #9a97b5;
+    --online: #4ade80;
+    --asleep: #6b7280;
+    --alliance: #4a7fd4;
+    --horde: #d4453a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(ellipse 900px 500px at 50% -10%, #1a1f42 0%, transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 0 16px 56px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  .display { font-family: "Fraunces", Georgia, serif; }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  /* ---- hero header ---- */
+  .hero {
+    padding: 48px 0 32px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 28px;
+  }
+  .crest {
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 16px;
+    opacity: 0.9;
+  }
+  .realm-name {
+    font-size: clamp(28px, 6vw, 44px);
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+  }
+  .tagline {
+    color: var(--text-dim);
+    font-size: 14px;
+    margin: 10px 0 0;
+    letter-spacing: 0.02em;
+  }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    margin-top: 18px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot.awake { background: var(--online); box-shadow: 0 0 8px var(--online); animation: pulse 2s infinite; }
+  .dot.asleep { background: var(--asleep); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* ---- section shell ---- */
+  section { margin-bottom: 32px; }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gold-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 0 0 12px;
+  }
+
+  /* ---- real players ---- */
+  .player-list { display: flex; flex-direction: column; gap: 10px; }
+  .player-card {
+    background: linear-gradient(135deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .class-icon {
+    width: 42px;
+    height: 42px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(212, 175, 106, 0.08);
+    border: 1px solid var(--border);
+  }
+  .player-info { flex: 1; min-width: 160px; }
+  .player-info .name {
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 19px;
+    font-weight: 600;
+  }
+  .player-info .sub {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-top: 2px;
+  }
+  .player-stats { display: flex; gap: 20px; }
+  .player-stats .pstat { text-align: center; }
+  .player-stats .pstat .v { font-size: 19px; font-weight: 700; color: var(--gold); font-family: "IBM Plex Mono", monospace; }
+  .player-stats .pstat .l { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* ---- stat tiles ---- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .tile {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .tile .value {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 26px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--gold);
+  }
+  .tile .label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 4px;
+  }
+
+  /* ---- world composition ---- */
+  .composition {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 22px;
+  }
+  .faction-bar {
+    display: flex;
+    height: 14px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--panel-2);
+    margin-bottom: 8px;
+  }
+  .faction-bar .seg.alliance { background: var(--alliance); }
+  .faction-bar .seg.horde { background: var(--horde); }
+  .faction-legend {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 22px;
+  }
+  .faction-legend .a { color: var(--alliance); }
+  .faction-legend .h { color: var(--horde); }
+  .class-bars { display: flex; flex-direction: column; gap: 7px; }
+  .class-row { display: grid; grid-template-columns: 112px 1fr 34px; align-items: center; gap: 10px; }
+  .class-row .cname { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .class-row .cname svg { flex-shrink: 0; }
+  .class-row .bar-track { height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+  .class-row .bar-fill { height: 100%; border-radius: 999px; }
+  .class-row .cn { font-size: 11px; color: var(--text-dim); text-align: right; font-family: "IBM Plex Mono", monospace; }
+
+  .sub-heading {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 18px 0 10px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .level-bars { display: flex; flex-direction: column; gap: 7px; }
+  .level-row { display: grid; grid-template-columns: 60px 1fr 34px; align-items: center; gap: 10px; }
+  .level-row .lname { font-size: 12px; color: var(--text-dim); }
+  .level-row .bar-track { height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+  .level-row .bar-fill { height: 100%; border-radius: 999px; background: var(--gold); }
+  .level-row .ln { font-size: 11px; color: var(--text-dim); text-align: right; font-family: "IBM Plex Mono", monospace; }
+
+  /* ---- top guilds ---- */
+  .guild-list { display: flex; flex-direction: column; gap: 8px; }
+  .guild-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 13px;
+  }
+  .guild-row .rank { color: var(--gold-dim); font-family: "IBM Plex Mono", monospace; margin-right: 10px; }
+  .guild-row .members { color: var(--text-dim); font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+
+  .rates-strip {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .rates-strip span { display: inline-flex; align-items: center; gap: 5px; }
+  .rates-strip b { color: var(--gold); font-family: "IBM Plex Mono", monospace; }
+
+  /* ---- session history ---- */
+  .session-list { display: flex; flex-direction: column; gap: 8px; }
+  .session-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 13px;
+  }
+  .session-row .sdate { color: var(--text); font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+  .session-row .sstats { display: flex; gap: 16px; color: var(--text-dim); font-size: 12px; }
+  .session-row .sstats b { color: var(--gold); font-family: "IBM Plex Mono", monospace; font-weight: 600; }
+  .session-row .sdelta-pos { color: var(--online); }
+  .session-row .sdelta-neg { color: var(--horde); }
+  .trend-empty { font-size: 12px; color: var(--text-dim); padding: 14px 2px; }
+
+  /* ---- recent sales ---- */
+  .sales-list { display: flex; flex-direction: column; gap: 8px; }
+  .sale-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 13px;
+    gap: 10px;
+  }
+  .sale-row .sitem { color: var(--text); }
+  .sale-row .sgold { color: var(--gold); font-family: "IBM Plex Mono", monospace; font-size: 12px; white-space: nowrap; }
+  .sale-empty { font-size: 12px; color: var(--text-dim); }
+
+  .stale-note {
+    font-size: 13px;
+    color: var(--text-dim);
+    text-align: center;
+    margin-bottom: 8px;
+  }
+  footer {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+    text-align: center;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <svg class="crest" viewBox="0 0 52 52" fill="none">
+        <path d="M26 4 L44 12 V26 C44 38 36 46 26 48 C16 46 8 38 8 26 V12 Z" stroke="#d4af6a" stroke-width="1.5" fill="rgba(212,175,106,0.06)"/>
+        <path d="M26 14 L26 34 M18 22 L34 22" stroke="#d4af6a" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="26" cy="14" r="2" fill="#d4af6a"/>
+      </svg>
+      <h1 class="realm-name display">The Solo Realm</h1>
+      <p class="tagline">A private AzerothCore world, populated by bots so no adventure goes unaccompanied</p>
+      <div class="status-badge"><span class="dot" id="dot"></span><span id="badge-text">loading&hellip;</span></div>
+      <div class="rates-strip" id="rates-strip"></div>
+    </div>
+
+    <div class="stale-note" id="stale-note" hidden></div>
+
+    <section id="players-section" hidden>
+      <div class="section-title" id="players-title">Real Players</div>
+      <div class="player-list" id="player-list"></div>
+    </section>
+
+    <section>
+      <div class="section-title">Realm at a Glance</div>
+      <div class="grid" id="grid"></div>
+    </section>
+
+    <section id="sessions-section">
+      <div class="section-title">Recent Sessions</div>
+      <div class="session-list" id="session-list"><div class="trend-empty">Loading&hellip;</div></div>
+    </section>
+
+    <section>
+      <div class="section-title">World Composition</div>
+      <div class="composition">
+        <div class="faction-bar">
+          <div class="seg alliance" id="alliance-seg" style="width:50%"></div>
+          <div class="seg horde" id="horde-seg" style="width:50%"></div>
+        </div>
+        <div class="faction-legend">
+          <span class="a" id="alliance-label">Alliance —</span>
+          <span class="h" id="horde-label">Horde —</span>
+        </div>
+        <div class="class-bars" id="class-bars"></div>
+        <div class="sub-heading">Level distribution</div>
+        <div class="level-bars" id="level-bars"></div>
+      </div>
+    </section>
+
+    <section id="guild-section" hidden>
+      <div class="section-title">Top Guilds</div>
+      <div class="guild-list" id="guild-list"></div>
+    </section>
+
+    <section>
+      <div class="section-title">Recent Auction Sales</div>
+      <div class="sales-list" id="sales-list"><div class="sale-empty">Loading&hellip;</div></div>
+    </section>
+
+    <footer>
+      <div id="founded-note"></div>
+      <div id="footer-updated" style="margin-top:4px">&mdash;</div>
+    </footer>
+  </div>
+
+<script>
+// Original line-art glyphs, one per class — generic fantasy-RPG symbols
+// (sword, bow, flame, leaf...) rather than anything copied from the game's
+// own icon set, same rule as everywhere else this server's own art appears.
+const CLASSES = {
+  1: { name: "Warrior", color: "#C79C6E", icon: '<path d="M5 19L19 5M19 19L5 5" stroke-linecap="round"/><path d="M14 10l2-2M10 14l-2 2M14 14l2 2M10 10l-2-2" stroke-linecap="round"/>' },
+  2: { name: "Paladin", color: "#F58CBA", icon: '<path d="M12 3l7 3v6c0 5-3 8-7 9-4-1-7-4-7-9V6l7-3z"/><circle cx="12" cy="11" r="2.1"/><path d="M12 6v1.4M12 14.6V16M7.6 11H9M15 11h1.4" stroke-linecap="round"/>' },
+  3: { name: "Hunter", color: "#ABD473", icon: '<path d="M7 3c-3 4-3 14 0 18" fill="none"/><path d="M3 12h15M15 8l3 4-3 4" stroke-linecap="round" stroke-linejoin="round"/>' },
+  4: { name: "Rogue", color: "#FFF569", icon: '<path d="M6 18L17 7M17 7l2-2M17 7l-3-1M17 7l1 3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="18" r="1.3" fill="currentColor" stroke="none"/>' },
+  5: { name: "Priest", color: "#F0EBE0", icon: '<circle cx="12" cy="12" r="4"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" stroke-linecap="round"/>' },
+  6: { name: "Death Knight", color: "#C41F3B", icon: '<path d="M12 3l7 9-7 9-7-9 7-9z"/><path d="M12 8v8M9 12h6" stroke-linecap="round"/>' },
+  7: { name: "Shaman", color: "#0070DE", icon: '<path d="M13 2 5 14h5l-2 8 9-13h-6l2-7z" fill="currentColor" stroke="none"/>' },
+  8: { name: "Mage", color: "#69CCF0", icon: '<path d="M12 2v6M12 16v6M2 12h6M16 12h6" stroke-linecap="round"/><path d="M6 6l3 3M15 15l3 3M18 6l-3 3M9 15l-3 3" stroke-linecap="round"/>' },
+  9: { name: "Warlock", color: "#9482C9", icon: '<path d="M12 2c2 4-2 5-2 8a4 4 0 108 0c0-2-1-2-1-4 2 1 3 4 3 7a6 6 0 11-12 0c0-5 3-7 4-11z"/>' },
+  11: { name: "Druid", color: "#FF7D0A", icon: '<path d="M4 20C4 10 10 4 20 4c0 10-6 16-16 16z"/><path d="M6 18C10 14 14 10 18 6" stroke-linecap="round"/>' },
+};
+const RACES = {
+  1: "Human", 2: "Orc", 3: "Dwarf", 4: "Night Elf", 5: "Undead",
+  6: "Tauren", 7: "Gnome", 8: "Troll", 10: "Blood Elf", 11: "Draenei",
+};
+
+function classIconSvg(classId, size) {
+  const cls = CLASSES[classId] || { color: "#d4af6a", icon: "" };
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${cls.color}" stroke-width="1.6" style="color:${cls.color}">${cls.icon}</svg>`;
+}
+
+// Abstract geometric shields, not the game's actual faction crests —
+// differentiated by silhouette (rounded vs. jagged) and color alone.
+const SHIELD_ALLIANCE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4a7fd4" stroke-width="1.8" style="vertical-align:-3px;margin-right:4px"><path d="M12 3l7 3v6c0 5-3 8-7 9-4-1-7-4-7-9V6l7-3z"/></svg>';
+const SHIELD_HORDE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d4453a" stroke-width="1.8" style="vertical-align:-3px;margin-right:4px"><path d="M12 3l7 2-1 6-6 10-6-10-1-6 7-2z"/></svg>';
+
+const TILES = [
+  { key: "online_now", label: "Online now" },
+  { key: "active_bots", label: "Active bots" },
+  { key: "total_characters", label: "Characters" },
+  { key: "accounts", label: "Accounts" },
+  { key: "guilds", label: "Guilds" },
+  { key: "ah_listings", label: "AH listings" },
+  { key: "ah_gold", label: "AH gold", format: v => Number(v).toLocaleString() },
+  { key: "world_playtime_hours", label: "World hours", format: v => Number(v).toLocaleString() },
+  { key: "total_sessions", label: "Sessions played" },
+  { key: "longest_session_seconds", label: "Longest session", format: v => formatDuration(v) },
+];
+
+function relativeTime(epochSeconds) {
+  const diff = Math.max(0, Date.now() / 1000 - epochSeconds);
+  if (diff < 60) return "just now";
+  if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+  if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+  return Math.floor(diff / 86400) + "d ago";
+}
+
+function renderTiles(stats) {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  for (const t of TILES) {
+    const raw = stats[t.key];
+    const value = raw == null ? "—" : (t.format ? t.format(raw) : raw);
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    tile.innerHTML = `<div class="value">${value}</div><div class="label">${t.label}</div>`;
+    grid.appendChild(tile);
+  }
+}
+
+function renderPlayers(players) {
+  const section = document.getElementById("players-section");
+  const list = document.getElementById("player-list");
+  const title = document.getElementById("players-title");
+  if (!players || !players.length) { section.hidden = true; return; }
+  section.hidden = false;
+  title.textContent = players.length === 1 ? "Real Player" : "Real Players";
+  list.innerHTML = players.map(p => {
+    const race = RACES[p.race] || "Unknown";
+    const cls = CLASSES[p.class] || { name: "Unknown", color: "#d4af6a" };
+    return `
+      <div class="player-card">
+        <div class="class-icon">${classIconSvg(p.class, 24)}</div>
+        <div class="player-info">
+          <div class="name" style="color:${cls.color}">${p.name}</div>
+          <div class="sub">${race} ${cls.name}</div>
+        </div>
+        <div class="player-stats">
+          <div class="pstat"><div class="v">${p.level}</div><div class="l">Level</div></div>
+          <div class="pstat"><div class="v">${p.playtime_hours}</div><div class="l">Hours</div></div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function renderComposition(faction, classCounts) {
+  const total = (faction.alliance || 0) + (faction.horde || 0);
+  const aPct = total ? Math.round((faction.alliance / total) * 100) : 50;
+  const hPct = 100 - aPct;
+  document.getElementById("alliance-seg").style.width = aPct + "%";
+  document.getElementById("horde-seg").style.width = hPct + "%";
+  document.getElementById("alliance-label").innerHTML = `${SHIELD_ALLIANCE}Alliance ${aPct}%`;
+  document.getElementById("horde-label").innerHTML = `${SHIELD_HORDE}Horde ${hPct}%`;
+
+  const classBars = document.getElementById("class-bars");
+  classBars.innerHTML = "";
+  const maxCount = Math.max(1, ...Object.values(classCounts || {}));
+  const order = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11];
+  for (const id of order) {
+    const count = (classCounts || {})[id] || 0;
+    const info = CLASSES[id];
+    const row = document.createElement("div");
+    row.className = "class-row";
+    row.innerHTML = `
+      <div class="cname">${classIconSvg(id, 15)}${info.name}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(count / maxCount) * 100}%;background:${info.color}"></div></div>
+      <div class="cn">${count}</div>`;
+    classBars.appendChild(row);
+  }
+}
+
+function formatDuration(seconds) {
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function formatDelta(n, suffix = "") {
+  if (n == null) return null;
+  const sign = n > 0 ? "+" : "";
+  const cls = n > 0 ? "sdelta-pos" : n < 0 ? "sdelta-neg" : "";
+  return `<span class="${cls}">${sign}${n.toLocaleString()}${suffix}</span>`;
+}
+
+function renderSessionHistory(sessions) {
+  const list = document.getElementById("session-list");
+  if (!sessions || !sessions.length) {
+    list.innerHTML = '<div class="trend-empty">No sessions recorded yet — this fills in after your first play session ends.</div>';
+    return;
+  }
+  // Most recent first.
+  const ordered = [...sessions].reverse().slice(0, 15);
+  list.innerHTML = ordered.map(s => {
+    const date = new Date(s.started_at * 1000).toLocaleString(undefined, {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+    const parts = [`<b>${formatDuration(s.duration_seconds)}</b>`, `peak <b>${s.peak_population}</b> online`];
+    const goldDelta = formatDelta(s.ah_gold_delta, "g");
+    if (goldDelta) parts.push(`AH ${goldDelta}`);
+    const listingsDelta = formatDelta(s.ah_listings_delta);
+    if (listingsDelta) parts.push(`listings ${listingsDelta}`);
+    return `
+      <div class="session-row">
+        <span class="sdate">${date}</span>
+        <span class="sstats">${parts.join(" &middot; ")}</span>
+      </div>`;
+  }).join("");
+}
+
+function renderSales(sales) {
+  const list = document.getElementById("sales-list");
+  if (!sales || !sales.length) {
+    list.innerHTML = '<div class="sale-empty">No completed sales yet — this fills in as auctions actually sell.</div>';
+    return;
+  }
+  list.innerHTML = sales.map(s => `
+    <div class="sale-row">
+      <span class="sitem">${s.item_name}${s.item_count > 1 ? ` x${s.item_count}` : ""}</span>
+      <span class="sgold">${s.gold.toLocaleString()}g</span>
+    </div>`).join("");
+}
+
+function renderGuilds(guilds) {
+  const section = document.getElementById("guild-section");
+  const list = document.getElementById("guild-list");
+  if (!guilds || !guilds.length) { section.hidden = true; return; }
+  section.hidden = false;
+  list.innerHTML = guilds.map((g, i) => `
+    <div class="guild-row">
+      <span><span class="rank">#${i + 1}</span>${g.name}</span>
+      <span class="members">${g.members} member${g.members === 1 ? "" : "s"}</span>
+    </div>`).join("");
+}
+
+const LEVEL_BUCKET_ORDER = ["1-19", "20-39", "40-59", "60-79", "80+"];
+
+function renderLevelBuckets(buckets) {
+  const container = document.getElementById("level-bars");
+  container.innerHTML = "";
+  const maxCount = Math.max(1, ...Object.values(buckets || {}));
+  for (const range of LEVEL_BUCKET_ORDER) {
+    const count = (buckets || {})[range] || 0;
+    const row = document.createElement("div");
+    row.className = "level-row";
+    row.innerHTML = `
+      <div class="lname">${range}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(count / maxCount) * 100}%"></div></div>
+      <div class="ln">${count}</div>`;
+    container.appendChild(row);
+  }
+}
+
+function renderRates(xpRate) {
+  const strip = document.getElementById("rates-strip");
+  if (xpRate == null) { strip.hidden = true; return; }
+  strip.hidden = false;
+  strip.innerHTML = `<span>XP Rate <b>${xpRate}x</b></span>`;
+}
+
+function render(data) {
+  const dot = document.getElementById("dot");
+  const badgeText = document.getElementById("badge-text");
+  const staleNote = document.getElementById("stale-note");
+  const footer = document.getElementById("footer-updated");
+  const founded = document.getElementById("founded-note");
+
+  const awake = data.status === "awake";
+  dot.className = "dot " + (awake ? "awake" : "asleep");
+  badgeText.textContent = awake ? "Realm Online" : "Realm Asleep";
+
+  if (data.stats) {
+    renderTiles(data.stats);
+    renderPlayers(data.stats.real_players);
+    renderComposition(data.stats.faction || {}, data.stats.class_counts || {});
+    renderLevelBuckets(data.stats.level_buckets || {});
+    renderGuilds(data.stats.top_guilds);
+    renderSales(data.stats.recent_sales);
+    renderRates(data.stats.xp_rate);
+    if (data.stats.realm_founded) {
+      const founded_date = new Date(data.stats.realm_founded).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+      founded.textContent = `Realm founded ${founded_date}`;
+    }
+  }
+
+  if (!awake && data.stats && data.stats.last_player_activity) {
+    staleNote.hidden = false;
+    staleNote.textContent = "The realm is asleep — last played " + relativeTime(data.stats.last_player_activity);
+  } else if (!awake && data.stats_as_of) {
+    staleNote.hidden = false;
+    staleNote.textContent = "The realm is asleep right now — showing the last session's numbers (" + relativeTime(data.stats_as_of) + ")";
+  } else if (!awake && !data.stats) {
+    staleNote.hidden = false;
+    staleNote.textContent = "The realm is asleep — no data yet from a previous session";
+  } else {
+    staleNote.hidden = true;
+  }
+
+  footer.textContent = "Updated " + relativeTime(data.as_of);
+}
+
+async function pollSessions() {
+  try {
+    const res = await fetch("/api/sessions");
+    renderSessionHistory(await res.json());
+  } catch (e) {
+    // Session history is a bonus view — leave whatever last rendered
+    // rather than disturbing the main status badge over a fetch hiccup.
+  }
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/api/stats");
+    render(await res.json());
+  } catch (e) {
+    document.getElementById("badge-text").textContent = "Unreachable";
+  }
+}
+
+poll();
+pollSessions();
+setInterval(poll, 20000);
+setInterval(pollSessions, 60000);
+</script>
+</body>
+</html>
