@@ -81,6 +81,7 @@ NPC_BUFFER_DIR="$DEPLOY_DIR/modules/mod-npc-buffer"
 CFBG_DIR="$DEPLOY_DIR/modules/mod-cfbg"
 ACCOUNT_ACHIEVEMENTS_DIR="$DEPLOY_DIR/modules/mod-account-achievements"
 INSTANCE_RESET_DIR="$DEPLOY_DIR/modules/mod-instance-reset"
+RANDOM_ENCHANTS_DIR="$DEPLOY_DIR/modules/mod-random-enchants"
 
 log() { echo "==> $*"; }
 
@@ -166,6 +167,7 @@ clone_module "$NPC_BUFFER_DIR" https://github.com/azerothcore/mod-npc-buffer.git
 clone_module "$CFBG_DIR" https://github.com/azerothcore/mod-cfbg.git mod-cfbg
 clone_module "$ACCOUNT_ACHIEVEMENTS_DIR" https://github.com/azerothcore/mod-account-achievements.git mod-account-achievements
 clone_module "$INSTANCE_RESET_DIR" https://github.com/azerothcore/mod-instance-reset.git mod-instance-reset
+clone_module "$RANDOM_ENCHANTS_DIR" https://github.com/azerothcore/mod-random-enchants.git mod-random-enchants
 
 # 5. Compose file
 cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
@@ -269,6 +271,21 @@ if [ ! -f "$INSTANCE_RESET_CONF" ]; then
   log "Created $INSTANCE_RESET_CONF from the .dist template."
 else
   log "$INSTANCE_RESET_CONF already exists — leaving your settings as-is."
+fi
+
+# random_enchants.conf: upstream defaults (EnchantChance1/2/3 = 70/65/60)
+# enchant most eligible loot/quest/craft/roll items, which is far more
+# pervasive than "occasional bonus." Tuned down to 15/10/5 (~15% one enchant,
+# ~1.5% two, ~0.075% three) for a rarer, more special-feeling drop instead.
+RANDOM_ENCHANTS_CONF="$CONF_DIR/random_enchants.conf"
+if [ ! -f "$RANDOM_ENCHANTS_CONF" ]; then
+  cp "$RANDOM_ENCHANTS_DIR/conf/random_enchants.conf.dist" "$RANDOM_ENCHANTS_CONF"
+  sed -i "s/^RandomEnchants\.EnchantChance1=.*/RandomEnchants.EnchantChance1=15.0/" "$RANDOM_ENCHANTS_CONF"
+  sed -i "s/^RandomEnchants\.EnchantChance2=.*/RandomEnchants.EnchantChance2=10.0/" "$RANDOM_ENCHANTS_CONF"
+  sed -i "s/^RandomEnchants\.EnchantChance3=.*/RandomEnchants.EnchantChance3=5.0/" "$RANDOM_ENCHANTS_CONF"
+  log "Created $RANDOM_ENCHANTS_CONF from the .dist template (enchant chances tuned down from upstream defaults)."
+else
+  log "$RANDOM_ENCHANTS_CONF already exists — leaving your settings as-is."
 fi
 
 # mod_llm_chatter.conf — created once from the .dist template, never
