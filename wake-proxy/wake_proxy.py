@@ -65,7 +65,16 @@ BOOT_POLL_INTERVAL = 1.0
 START_COOLDOWN = 15.0  # don't re-trigger `compose up` more often than this
 
 IDLE_CHECK_INTERVAL = 60.0
-IDLE_THRESHOLD_SECONDS = 15 * 60
+# Was 15 min; dropped to 5 (2026-09-14) — this host is thermally constrained
+# (Turbo Boost permanently disabled, package temp ~88°C even at idle-ish
+# load), and every minute in this window is spent with all random bots
+# still logged in and actively AI-ticking (the same ~150-230% worldserver
+# CPU measured all through tonight's load testing) for zero benefit once
+# you've actually stopped playing. 5 min still comfortably absorbs a brief
+# alt-tab or network hiccup without triggering an unwanted sleep/wake cycle
+# (waking back up takes ~60-70s and the first reconnect attempt always
+# shows a connection error — see "Known limitation" below).
+IDLE_THRESHOLD_SECONDS = 5 * 60
 
 DB_ROOT_PASSWORD = os.environ.get("DB_ROOT_PASSWORD", "password")
 

@@ -448,7 +448,7 @@ function renderPlayers(players) {
         </div>
         <div class="player-stats">
           <div class="pstat"><div class="v">${p.level}</div><div class="l">Level</div></div>
-          <div class="pstat"><div class="v">${p.playtime_hours}</div><div class="l">Hours</div></div>
+          <div class="pstat"><div class="v">${formatDuration(p.playtime_seconds)}</div><div class="l">Played</div></div>
         </div>
       </div>`;
   }).join("");
@@ -481,6 +481,7 @@ function renderComposition(faction, classCounts) {
 }
 
 function formatDuration(seconds) {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) return "—";
   const m = Math.round(seconds / 60);
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
@@ -580,18 +581,23 @@ function render(data) {
   dot.className = "dot " + (awake ? "awake" : "asleep");
   badgeText.textContent = awake ? "Realm Online" : "Realm Asleep";
 
-  if (data.stats) {
-    renderTiles(data.stats);
-    renderPlayers(data.stats.real_players);
-    renderComposition(data.stats.faction || {}, data.stats.class_counts || {});
-    renderLevelBuckets(data.stats.level_buckets || {});
-    renderGuilds(data.stats.top_guilds);
-    renderSales(data.stats.recent_sales);
-    renderRates(data.stats.xp_rate);
-    if (data.stats.realm_founded) {
-      const founded_date = new Date(data.stats.realm_founded).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
-      founded.textContent = `Realm founded ${founded_date}`;
-    }
+  // Always render every section, even with no data at all (e.g. first-ever
+  // boot, or right after a cache-clearing schema change) — each function's
+  // own empty-state guard (hide the section, or show a "nothing yet"
+  // message) is correct here; leaving the initial static HTML untouched
+  // instead just gets stuck showing "Loading..." forever, which is a lie
+  // once the fetch has actually completed and simply found nothing.
+  const stats = data.stats || {};
+  renderTiles(stats);
+  renderPlayers(stats.real_players);
+  renderComposition(stats.faction || {}, stats.class_counts || {});
+  renderLevelBuckets(stats.level_buckets || {});
+  renderGuilds(stats.top_guilds);
+  renderSales(stats.recent_sales);
+  renderRates(stats.xp_rate);
+  if (stats.realm_founded) {
+    const founded_date = new Date(stats.realm_founded).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+    founded.textContent = `Realm founded ${founded_date}`;
   }
 
   if (!awake && data.stats && data.stats.last_player_activity) {

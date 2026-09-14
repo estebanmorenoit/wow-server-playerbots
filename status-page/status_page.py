@@ -251,8 +251,7 @@ def query_live_stats() -> dict:
             # enough" bar.
             cur.execute(
                 """
-                SELECT c.name, c.race, c.class, c.level,
-                       ROUND(c.totaltime / 3600, 1) AS playtime_hours
+                SELECT c.name, c.race, c.class, c.level, c.totaltime AS playtime_seconds
                 FROM acore_characters.characters c
                 JOIN acore_auth.account a ON a.id = c.account
                 WHERE a.username NOT LIKE 'RNDBOT%%' AND c.totaltime > 60
