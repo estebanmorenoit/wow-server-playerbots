@@ -3,7 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Realm Status</title>
+<title>The Solo Realm — Status</title>
+<meta name="description" content="Live status for The Solo Realm, a private AzerothCore server (WotLK 3.3.5a) populated by AI playerbots for solo play — real-time population, Auction House economy, world composition, and session history.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b0e1a">
+<meta property="og:title" content="The Solo Realm — Status">
+<meta property="og:description" content="Live population, economy, and session history for a private solo-play AzerothCore realm.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MiA1MiI+CjxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEwIiBmaWxsPSIjMGIwZTFhIi8+CjxwYXRoIGQ9Ik0yNiA2IEw0MiAxMyBWMjYgQzQyIDM3IDM1IDQ0IDI2IDQ2IEMxNyA0NCAxMCAzNyAxMCAyNiBWMTMgWiIgc3Ryb2tlPSIjZDRhZjZhIiBzdHJva2Utd2lkdGg9IjIuMiIgZmlsbD0icmdiYSgyMTIsMTc1LDEwNiwwLjEpIi8+CjxwYXRoIGQ9Ik0yNiAxNiBMMjYgMzQgTTE5IDIzIEwzMyAyMyIgc3Ryb2tlPSIjZDRhZjZhIiBzdHJva2Utd2lkdGg9IjIuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CjxjaXJjbGUgY3g9IjI2IiBjeT0iMTYiIHI9IjIuNiIgZmlsbD0iI2Q0YWY2YSIvPgo8L3N2Zz4=">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -60,9 +67,13 @@
   .tagline {
     color: var(--text-dim);
     font-size: 14px;
-    margin: 10px 0 0;
+    line-height: 1.5;
+    margin: 10px auto 0;
+    max-width: 480px;
     letter-spacing: 0.02em;
+    text-wrap: balance;
   }
+  .tagline em { color: var(--text); font-style: italic; }
   .status-badge {
     display: inline-flex;
     align-items: center;
@@ -298,7 +309,7 @@
         <circle cx="26" cy="14" r="2" fill="#d4af6a"/>
       </svg>
       <h1 class="realm-name display">The Solo Realm</h1>
-      <p class="tagline">A private AzerothCore world, populated by bots so no adventure goes unaccompanied</p>
+      <p class="tagline">A private, solo-friendly <em>World of Warcraft: Wrath of the Lich King</em> (3.3.5a) realm built on AzerothCore — populated by AI playerbots that quest, level, form guilds, and trade, so the world feels alive with just one real player.</p>
       <div class="status-badge"><span class="dot" id="dot"></span><span id="badge-text">loading&hellip;</span></div>
       <div class="rates-strip" id="rates-strip"></div>
     </div>

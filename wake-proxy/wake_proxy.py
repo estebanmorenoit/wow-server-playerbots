@@ -119,9 +119,18 @@ def trigger_start(name: str) -> None:
         if now - _last_start_attempt < START_COOLDOWN:
             return
         _last_start_attempt = now
-    log(f"[{name}] backend down — running `docker compose --profile llm-chatter up -d`")
+    log(f"[{name}] backend down — waking {', '.join(GAME_SERVICES)}")
     try:
-        result = compose("--profile", "llm-chatter", "up", "-d")
+        # Scoped to GAME_SERVICES specifically — never a bare `up -d`
+        # covering the whole file. A wake-proxy or status-page picked up as
+        # needing a recreate (any config drift, e.g. from an earlier
+        # ad-hoc rebuild) would make this container ask Docker to replace
+        # itself while it's the one running the command: Docker sends
+        # SIGTERM, the self-referential process doesn't exit cleanly within
+        # the grace period, and it gets force-killed mid-wake — which is
+        # exactly what happened once already. Excluding the always-on tier
+        # here makes that structurally impossible, not just unlikely.
+        result = compose("--profile", "llm-chatter", "up", "-d", *GAME_SERVICES)
         if result.returncode != 0:
             log(f"[{name}] docker compose up -d failed: {result.stderr.strip()}")
     except Exception as exc:  # noqa: BLE001 - never let this thread die
