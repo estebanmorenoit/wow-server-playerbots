@@ -25,6 +25,14 @@ service that never gets stopped. Three jobs:
    continuous change through 20+ idle hours. status-page reads this same
    file (mounted read-only there) to render session history.
 
+   Session start/end is keyed on real_player_online_count(), not the
+   aggregate online_character_count() the sleep decision below uses —
+   after a real player disconnects, bots take up to 300s to log off and
+   the idle timer then runs its own threshold on top of that, so the
+   aggregate count doesn't reach 0 until well after the session actually
+   ended. Using it for session bounds would count that shutdown overhead
+   as play time (a real 2-3 minute session was recording as 12 minutes).
+
 Needs the host's Docker socket mounted to control sibling containers, and
 the deploy directory mounted at the SAME absolute path it lives at on the
 host — docker-compose.yml's bind mounts (./env/dist/etc etc.) are relative
@@ -261,6 +269,36 @@ def online_character_count() -> int | None:
         return None
 
 
+def real_player_online_count() -> int | None:
+    """Same as online_character_count() but excludes RNDBOT% accounts —
+    used to bound a *session* (login to logout) precisely, as distinct
+    from online_character_count()'s use in the sleep decision. The two
+    diverge on purpose: after a real player disconnects, bots take up to
+    300s to log off, then the idle timer runs its own threshold on top —
+    the aggregate count (and thus the sleep decision) shouldn't reach 0
+    until well after the session has genuinely ended, but the session
+    record needs to stop counting at the actual logout, not whenever the
+    server gets around to sleeping."""
+    result = subprocess.run(
+        [
+            "docker", "exec", "ac-database", "mysql", "-uroot", f"-p{DB_ROOT_PASSWORD}",
+            "-N", "-B", "acore_characters", "-e",
+            "SELECT COUNT(*) FROM characters c JOIN acore_auth.account a ON a.id = c.account "
+            "WHERE c.online = 1 AND a.username NOT LIKE 'RNDBOT%';",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        log(f"[session] real-player online query failed: {result.stderr.strip()}")
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
 def fetch_economy_snapshot() -> dict | None:
     result = subprocess.run(
         [
@@ -372,14 +410,32 @@ def idle_watcher() -> None:
         if online is None:
             continue
 
-        if online > 0:
-            if session_start_time is None:
+        # Session start/end is keyed on the real player specifically, not
+        # the aggregate count below — bots take up to 300s to log off after
+        # the player disconnects, and the sleep decision then runs its own
+        # multi-minute threshold on top of that. If sessions used the same
+        # aggregate signal, a session record would count all of that
+        # shutdown overhead as if it were play time (confirmed: a 2-3
+        # minute play session recorded as 12 minutes). Recording the moment
+        # the real player's own online count hits 0 reflects actual play
+        # time instead.
+        real_online = real_player_online_count()
+        if real_online is not None:
+            if real_online > 0 and session_start_time is None:
                 session_start_time = time.time()
                 session_start_econ = fetch_economy_snapshot()
                 peak_population = online
                 log(f"[session] started (population {online})")
-            else:
+            elif real_online > 0:
                 peak_population = max(peak_population, online)
+            elif real_online == 0 and session_start_time is not None:
+                log("[session] real player logged out — recording session")
+                record_session(session_start_time, time.time(), peak_population, session_start_econ, fetch_economy_snapshot())
+                session_start_time = None
+                session_start_econ = None
+                peak_population = 0
+
+        if online > 0:
             idle_since = None
             continue
 
@@ -395,11 +451,6 @@ def idle_watcher() -> None:
             continue
 
         log(f"[idle] idle for {idle_for:.0f}s — backing up before stopping game stack")
-        if session_start_time is not None:
-            record_session(session_start_time, time.time(), peak_population, session_start_econ, fetch_economy_snapshot())
-            session_start_time = None
-            session_start_econ = None
-            peak_population = 0
         run_backup()
         log("[idle] stopping game stack (leaving wake-proxy up)")
         result = compose("stop", *GAME_SERVICES, timeout=90)
