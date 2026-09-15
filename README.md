@@ -5,7 +5,8 @@
 [![WotLK](https://img.shields.io/badge/WoW-3.3.5a%20(WotLK)-4a5dc7)](#connecting-a-client)
 [![AzerothCore](https://img.shields.io/badge/built%20on-AzerothCore-c0392b)](https://www.azerothcore.org/)
 [![Docker Compose](https://img.shields.io/badge/orchestration-Docker%20Compose-2496ed?logo=docker&logoColor=white)](./docker-compose.yml)
-[![Worldserver image size](https://img.shields.io/docker/image-size/estebanmorenoit/ac-wotlk-worldserver-playerbots/master?label=worldserver%20image)](https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots)
+[![Container Registry](https://img.shields.io/badge/images-GHCR-2496ed?logo=github)](https://github.com/users/estebanmorenoit/packages/container/package/ac-wotlk-worldserver-playerbots)
+[![Provenance](https://img.shields.io/badge/supply%20chain-attested-2ea44f?logo=github)](#prebuilt-images)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
 
 Self-hosted **World of Warcraft: Wrath of the Lich King (3.3.5a, build 12340)** private server, built on [AzerothCore](https://www.azerothcore.org/) — solo-play focused, populated by AI bots instead of real players.
@@ -64,24 +65,29 @@ graph LR
 
 ## Prebuilt images
 
-The C++ side (core + all ten modules) is baked into these images — no build toolchain needed to run the server:
+The C++ side (core + all ten modules) is baked into these images — no build toolchain needed to run the server. Hosted on **GHCR**, not Docker Hub:
 
 | Image | Purpose |
 |---|---|
-| `estebanmorenoit/ac-wotlk-worldserver-playerbots` | World server (game logic), all ten modules built in |
-| `estebanmorenoit/ac-wotlk-authserver-playerbots` | Auth/login server (port 3724) |
-| `estebanmorenoit/ac-wotlk-db-import-playerbots` | One-shot DB bootstrap/migration (runs before the servers) |
-| `estebanmorenoit/ac-wotlk-client-data-playerbots` | One-shot client data extraction (maps/vmaps/mmaps/dbc) |
+| `ghcr.io/estebanmorenoit/ac-wotlk-worldserver-playerbots` | World server (game logic), all ten modules built in |
+| `ghcr.io/estebanmorenoit/ac-wotlk-authserver-playerbots` | Auth/login server (port 3724) |
+| `ghcr.io/estebanmorenoit/ac-wotlk-db-import-playerbots` | One-shot DB bootstrap/migration (runs before the servers) |
+| `ghcr.io/estebanmorenoit/ac-wotlk-client-data-playerbots` | One-shot client data extraction (maps/vmaps/mmaps/dbc) |
 
 All four are built from the same `apps/docker/Dockerfile` (different `target` per service), from a **personal fork** ([`estebanmorenoit/azerothcore-wotlk`](https://github.com/estebanmorenoit/azerothcore-wotlk)) with its own GitHub Actions workflow — `build-images.yml`, manual `workflow_dispatch` trigger only, never runs on push. That workflow checks out all ten modules explicitly (`modules/*` is gitignored in the core repo by design) and patches a known upstream compile bug in mod-llm-chatter before building.
+
+**Supply chain**: the workflow authenticates to GHCR with its own ephemeral `GITHUB_TOKEN` — scoped to that one run, expires with it — rather than a long-lived registry PAT stored as two repo secrets (and, before this, again in this host's own `~/.docker/config.json`). Every image also carries a real build provenance attestation (which exact commit and workflow run produced it) plus an SBOM, both attached to the image and verifiable without trusting anything this README says:
+```bash
+gh attestation verify oci://ghcr.io/estebanmorenoit/ac-wotlk-worldserver-playerbots:master --owner estebanmorenoit
+```
 
 Each new module gets its own image tag while under test, rather than overwriting `:master` directly — once verified working (as `:quest-loot-fix-test` was, on 2026-09-14), it gets promoted *to* `:master`, which is what's actually deployed now. `:instance-reset-test`, `:cfbg-achievements-test`, `:npc-buffer-test`, `:progression-test`, and `:ahbot-test` remain in `docker-compose.yml`'s history as earlier known-good states if a rollback is ever needed.
 
 **Keeping the fork's core current**: [`sync-upstream.yml`](https://github.com/estebanmorenoit/azerothcore-wotlk/blob/Playerbot/.github/workflows/sync-upstream.yml) (in that fork, not this repo) runs weekly and opens a PR there whenever `mod-playerbots/azerothcore-wotlk`'s `Playerbot` branch gets new commits — detection-only, never merges or rebuilds on its own. Bringing in a change, rebuilding under a test tag, and promoting to `:master` here all stay separate, manual, deliberate steps.
 
-**Exceptions — not Docker Hub images, built locally instead:**
+**Exceptions — not pulled from a registry, built locally instead:**
 - `ac-llm-chatter-bridge` — mod-llm-chatter's Python bridge, built straight from `Hokken/mod-llm-chatter` on GitHub via a git build context (no local clone needed for the build itself). `deploy.sh` still clones `modules/mod-llm-chatter` anyway, since `ac-worldserver` mounts the whole `modules/` tree for `.conf.dist` discovery.
-- `wake-proxy` — a tiny stdlib-only Python relay (no dependencies to speak of), built from [`wake-proxy/`](./wake-proxy/) in *this* repo (`build: ./wake-proxy` in `docker-compose.yml`). Building the four C++ images is expensive enough to justify hosting pre-built copies on Docker Hub; this one builds from source in a couple of seconds, so there's no benefit to a registry — and building straight from committed source means the running image can never drift from what's actually in git. `docker compose up -d` builds it automatically the first time, same as any fresh deploy of the rest of the stack — nothing extra to run by hand.
+- `wake-proxy` — a tiny stdlib-only Python relay (no dependencies to speak of), built from [`wake-proxy/`](./wake-proxy/) in *this* repo (`build: ./wake-proxy` in `docker-compose.yml`). Building the four C++ images is expensive enough (over an hour, last measured) to justify hosting pre-built copies on GHCR; this one builds from source in a couple of seconds, so there's no benefit to a registry — and building straight from committed source means the running image can never drift from what's actually in git. `docker compose up -d` builds it automatically the first time, same as any fresh deploy of the rest of the stack — nothing extra to run by hand.
 
 ---
 

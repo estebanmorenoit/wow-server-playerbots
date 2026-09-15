@@ -372,7 +372,7 @@
 
       <div class="cta-row">
         <a class="btn primary" href="https://github.com/estebanmorenoit/wow-server-playerbots">Get the source</a>
-        <a class="btn ghost" href="https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots">Prebuilt images on Docker Hub</a>
+        <a class="btn ghost" href="https://github.com/users/estebanmorenoit/packages/container/package/ac-wotlk-worldserver-playerbots">Prebuilt images on GHCR</a>
       </div>
     </div>
 
@@ -406,6 +406,17 @@
       <div class="prose">
         <p>This runs on a fanless mini PC, not a rented data-center box — an Intel NUC with two physical cores, Turbo Boost permanently disabled because the package sits at 85&ndash;88&deg;C even without it. A hundred bots ticking AI logic around the clock isn't something that hardware can just absorb for free.</p>
         <p>So it doesn't run around the clock. A proxy holds the real connection ports open at all times and does nothing else — the moment a client tries to log in, if the game stack is asleep, it wakes everything, holds the connection open through the ~60&ndash;70 second cold boot, then gets out of the way. Five minutes after the last real player disconnects, the whole stack backs itself up and stops. No idle heat, no fan noise, no cost for a world nobody's currently watching.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">Every image proves where it came from</div>
+      <div class="prose">
+        <p>The four prebuilt images live on <strong>GHCR</strong>, published by a GitHub Actions workflow that authenticates with its own ephemeral <code class="inline">GITHUB_TOKEN</code> &mdash; scoped to that one run, expired the moment it finishes. Nothing long-lived to leak, store, or rotate.</p>
+        <p>Each image also carries a real build provenance attestation &mdash; which exact commit and workflow run produced it &mdash; plus a software bill of materials, both attached directly to the image rather than asserted in a README. Anyone can check, not just trust:</p>
+      </div>
+      <div class="cmd-block">
+        <div><span class="c">$</span> gh attestation verify oci://ghcr.io/estebanmorenoit/ac-wotlk-worldserver-playerbots:master --owner estebanmorenoit</div>
       </div>
     </section>
 
@@ -449,7 +460,7 @@
       </div>
       <div class="footlinks">
         <a href="https://github.com/estebanmorenoit/wow-server-playerbots">GitHub</a>
-        <a href="https://hub.docker.com/r/estebanmorenoit/ac-wotlk-worldserver-playerbots">Docker Hub</a>
+        <a href="https://github.com/users/estebanmorenoit/packages/container/package/ac-wotlk-worldserver-playerbots">GHCR</a>
         <a href="https://www.azerothcore.org/">AzerothCore</a>
       </div>
     </footer>
