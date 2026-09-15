@@ -58,6 +58,42 @@ services:
     networks:
       - monitoring
 
+  # Log aggregation — single-binary mode (no separate distributor/ingester/
+  # querier processes), which is the right scale for one host. Not exposed
+  # on a host port: only Grafana and Promtail (both on this network) ever
+  # need to reach it.
+  loki:
+    container_name: monitoring-loki
+    image: grafana/loki:latest
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - monitoring
+
+  # Ships every container's logs to Loki. docker_sd_configs (see
+  # promtail-config.yml) needs the Docker API to label entries with real
+  # container names, so this gets a read-only docker.sock mount — the same
+  # justified exception wake-proxy already makes elsewhere in this project,
+  # granted only because there's no other way to get that information, and
+  # read-only because Promtail only ever lists/inspects, never controls.
+  promtail:
+    container_name: monitoring-promtail
+    image: grafana/promtail:latest
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/run/promtail
+    networks:
+      - monitoring
+    depends_on:
+      - loki
+
   grafana:
     container_name: monitoring-grafana
     image: grafana/grafana:latest
@@ -75,6 +111,7 @@ services:
       - monitoring
     depends_on:
       - prometheus
+      - loki
 
 networks:
   monitoring:
@@ -82,3 +119,5 @@ networks:
 volumes:
   prometheus-data:
   grafana-data:
+  loki-data:
+  promtail-positions:

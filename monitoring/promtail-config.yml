@@ -1,0 +1,81 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /run/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+# docker_sd_configs (not a plain file glob over /var/lib/docker/containers)
+# so log entries carry the real container name (ac-worldserver, ac-database,
+# ...) as a label instead of just the opaque container ID from the log file
+# path — that's the one thing only the Docker API can tell us, which is why
+# this container gets a read-only docker.sock mount (see docker-compose.yml).
+scrape_configs:
+  - job_name: docker
+    # Filtered at the Docker Engine API itself, one docker_sd_configs entry
+    # per project rather than one entry listing both — this host also runs
+    # an unrelated, long-running media stack with weeks of chatty logs, and
+    # two things didn't do what their docs suggest: a relabel_configs
+    # `action: keep` wasn't honored by this Promtail version's docker_sd
+    # target discovery (confirmed via its own /targets debug page — the
+    # config loaded correctly, but non-matching containers still showed
+    # ready=true); and passing both project names as one `label` filter's
+    # `values` list ANDs them instead of OR-ing (confirmed directly against
+    # the Docker API — 0 containers have both labels at once, since a
+    # container can only belong to one compose project). Filtering
+    # server-side, one project per entry, means Promtail never even sees
+    # the other stack's containers, avoiding both the noise and the
+    # one-time backlog-replay cost of tailing a stranger's multi-week log
+    # history on a thermally-limited 2-core host.
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project=azerothcore-playerbots"]
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project=monitoring"]
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: "container"
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: "compose_project"
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: "compose_service"
+    pipeline_stages:
+      - docker: {}
+      # AzerothCore's console output is ANSI-colored (verified against real
+      # ac-worldserver output: 36=cyan/info by far the most common, 33=
+      # yellow/warn, 31;1=bold red/error) — stored raw, every line comes
+      # through Grafana's Logs panel as literal "\x1b[0m\x1b[36m..." control
+      # sequences prefixing the actual message, which is what made log
+      # lines hard to read at a glance. Capture the color (it's the only
+      # real severity signal this log format has) into a genuine `level`
+      # label — Grafana's Logs panel auto-color-codes on a label literally
+      # named `level` — then strip every ANSI sequence from the stored line
+      # so what's left is just the clean message text.
+      #
+      # Matches 31/33 specifically rather than "the first code in the
+      # line": info lines are prefixed with a reset code before their color
+      # (\x1b[0m\x1b[36m...), so grabbing the first match would capture "0"
+      # instead of the real color — happened to still default to info by
+      # luck, but would have silently misclassified a same-prefixed warning
+      # line as info too. Verified against real captured samples before
+      # deploying, not just reasoned through.
+      - regex:
+          expression: '\x1b\[(?P<ansi_code>31|33)(?:;\d+)?m'
+      - template:
+          source: level
+          template: '{{ if eq .ansi_code "31" }}error{{ else if eq .ansi_code "33" }}warn{{ else }}info{{ end }}'
+      - labels:
+          level:
+      - replace:
+          expression: '\x1b\[[0-9;]*m'
+          replace: ""

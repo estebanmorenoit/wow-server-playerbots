@@ -1,0 +1,52 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# Tuned for a single-user homelab, not a multi-tenant install: still a
+# bounded cap rather than Loki's much longer defaults, but this host has
+# 361G free (checked directly) against a real steady-state ingestion rate
+# of a few MB/day scoped to just this project's containers (see README) —
+# 30 days costs single-digit GB at most, nowhere near a real constraint.
+limits_config:
+  retention_period: 720h # 30 days
+  reject_old_samples: true
+  reject_old_samples_max_age: 720h
+  # Bumped from the 4/8 defaults: raising retention above also let Promtail
+  # backfill real, previously-rejected-as-too-old history from this
+  # project's own containers, which briefly exceeded the old rate cap
+  # (confirmed via Loki's own "ingestion rate limit exceeded" errors right
+  # after this change). Steady-state volume is far below either number.
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  max_query_series: 5000
+
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  delete_request_store: filesystem
