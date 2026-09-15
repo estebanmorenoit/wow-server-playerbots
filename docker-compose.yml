@@ -192,6 +192,23 @@ services:
       # than raised independently — measure headroom (docker stats / server
       # info uptime diff) before increasing either further.
       AC_AI_PLAYERBOT_ITERATIONS_PER_TICK: "6"
+      # Cosmetic: bots occasionally play emotes (wave, dance, sit, ...) on
+      # their own, not just chat. No behavioral/performance impact.
+      AC_AI_PLAYERBOT_RANDOM_BOT_EMOTE: "1"
+      # Bots actually queue for battlegrounds instead of merely being
+      # *able* to join one if invited — this is what's needed to ever see
+      # real data in pvpstats_battlegrounds (confirmed empty beforehand).
+      AC_AI_PLAYERBOT_RANDOM_BOT_AUTO_JOIN_BG: "1"
+      # Bots prefer clustering near their own guild/group members instead
+      # of being placed independently of who they're nominally with — makes
+      # "who's standing near me" feel more socially coherent.
+      AC_AI_PLAYERBOT_RANDOM_BOT_GUILD_NEARBY: "1"
+      AC_AI_PLAYERBOT_RANDOM_BOT_GROUP_NEARBY: "1"
+      # Guild "task board" system (bots complete tasks for guild rewards).
+      # Marked "Deprecated Settings (yet still in use)" in the module's own
+      # playerbots.conf.dist — enabled to try, but the first thing to
+      # suspect and revert if anything guild-related looks off after this.
+      AC_AI_PLAYERBOT_ENABLE_GUILD_TASKS: "1"
       # DataDir defaults to "." which resolves against the image's WorkingDir
       # (/azerothcore), not against the client-data volume mounted below —
       # without this the world server fails "Failed to find map files for
@@ -305,6 +322,7 @@ services:
     cpuset: "0"
     environment:
       DB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:-password}"
+      PROMETHEUS_URL: "http://prometheus:9090"
     volumes:
       - ac-status-cache:/data
       # Read-only: lets the page show the real, currently-running XP rate
@@ -318,9 +336,21 @@ services:
       - "8090:8090"
     networks:
       - ac-network
+      # Reaches Prometheus (host CPU/RAM/temp via node-exporter) by
+      # container name across the standalone monitoring/ stack, instead of
+      # mounting /proc and /sys into this container ourselves. Degrades to
+      # "unavailable" in the UI if the monitoring stack isn't running.
+      - monitoring
 
 networks:
   ac-network:
+  # External: monitoring/docker-compose.yml owns this stack's lifecycle
+  # independently. The name is Compose's default for that directory
+  # ("monitoring" folder -> "monitoring_monitoring") — rename the folder
+  # and this must be updated to match.
+  monitoring:
+    external: true
+    name: monitoring_monitoring
 
 volumes:
   ac-mysql-data:
