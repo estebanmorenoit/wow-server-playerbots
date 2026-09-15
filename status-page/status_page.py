@@ -21,6 +21,8 @@ import re
 import socket
 import threading
 import time
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pymysql
@@ -43,15 +45,8 @@ WORLDSERVER_CONF = "/worldserver.conf"
 # continuous change through 20+ idle hours that never actually happened.
 SESSIONS_FILE = "/backups/sessions.json"
 
-# AzerothCore's own enum (src/server/game/Mails/Mail.h) and auction mail
-# subject encoding (AuctionEntry::BuildAuctionMailSubject in
-# AuctionHouseMgr.cpp: "<item_template>:0:<response>:<auctionId>:<itemCount>",
-# a machine-readable string the real client parses locally — never meant to
-# be read directly, but exactly what we need here). response==2 is the
-# seller-side "your auction sold" notification, the only one that means a
-# completed sale rather than a bid, a win, or an expiry.
-MAIL_TYPE_AUCTION = 2
-AUCTION_SUCCESSFUL = 2
+PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
+PROMETHEUS_TIMEOUT = 2.0
 
 # "Online" means a player could actually log in right now — the database
 # alone isn't enough proof of that (e.g. it can be woken by itself for
@@ -94,6 +89,20 @@ with open(os.path.join(os.path.dirname(__file__), "index.html")) as _f:
 ALLIANCE_RACES = {1, 3, 4, 7, 11}  # Human, Dwarf, Night Elf, Gnome, Draenei
 HORDE_RACES = {2, 5, 6, 8, 10}  # Orc, Undead, Tauren, Troll, Blood Elf
 
+# WotLK skill-line IDs for the profession panel — a small, fixed list that
+# hasn't changed since the expansion shipped, unlike achievement_dbc/
+# areatable_dbc (both empty on this install — see README): those need real
+# client DBC data this core never imported, but profession names are common
+# knowledge, not extracted data, so hardcoding them here carries none of
+# that risk.
+PROFESSION_NAMES = {
+    164: "Blacksmithing", 165: "Leatherworking", 171: "Alchemy",
+    182: "Herbalism", 186: "Mining", 197: "Tailoring",
+    202: "Engineering", 333: "Enchanting", 393: "Skinning",
+    755: "Jewelcrafting", 773: "Inscription",
+    185: "Cooking", 129: "First Aid", 356: "Fishing",
+}
+
 _cache_lock = threading.Lock()
 
 
@@ -135,55 +144,67 @@ def _one(cur, query: str):
     return row
 
 
-def fetch_recent_sales(cur, limit: int = 10) -> list[dict]:
+def fetch_top_crafters(cur) -> list[dict]:
+    """Highest-skill character per profession — real, populated
+    character_skills data, unblocked by the missing DBC reference tables
+    (see PROFESSION_NAMES above). Window function needs MySQL 8+, which
+    this install runs."""
+    placeholders = ",".join(["%s"] * len(PROFESSION_NAMES))
     cur.execute(
-        """
-        SELECT subject, money, deliver_time
-        FROM acore_characters.mail
-        WHERE messageType = %s
-        ORDER BY deliver_time DESC
-        LIMIT 200
+        f"""
+        SELECT profession, name, skill FROM (
+            SELECT cs.skill AS profession, c.name, cs.value AS skill,
+                   ROW_NUMBER() OVER (PARTITION BY cs.skill ORDER BY cs.value DESC, c.name ASC) AS rn
+            FROM acore_characters.character_skills cs
+            JOIN acore_characters.characters c ON c.guid = cs.guid
+            WHERE cs.skill IN ({placeholders})
+        ) ranked
+        WHERE rn = 1
+        ORDER BY skill DESC
         """,
-        (MAIL_TYPE_AUCTION,),
+        tuple(PROFESSION_NAMES),
     )
-    sales = []
-    item_entries = set()
-    parsed = []
-    for row in cur.fetchall():
-        # subject format: "<item_template>:0:<response>:<auctionId>:<itemCount>"
-        parts = (row["subject"] or "").split(":")
-        if len(parts) < 5:
-            continue
-        try:
-            item_entry, _, response, _, item_count = (int(p) for p in parts[:5])
-        except ValueError:
-            continue
-        if response != AUCTION_SUCCESSFUL:
-            continue
-        parsed.append({"item_entry": item_entry, "item_count": item_count, **row})
-        item_entries.add(item_entry)
-        if len(parsed) >= limit:
-            break
+    return [
+        {"profession": PROFESSION_NAMES.get(r["profession"], f"Skill #{r['profession']}"), "name": r["name"], "skill": r["skill"]}
+        for r in cur.fetchall()
+    ]
 
-    names = {}
-    if item_entries:
-        placeholders = ",".join(["%s"] * len(item_entries))
-        cur.execute(
-            f"SELECT entry, name FROM acore_world.item_template WHERE entry IN ({placeholders})",
-            tuple(item_entries),
-        )
-        names = {r["entry"]: r["name"] for r in cur.fetchall()}
 
-    for p in parsed:
-        sales.append(
-            {
-                "item_name": names.get(p["item_entry"], f"Item #{p['item_entry']}"),
-                "item_count": p["item_count"],
-                "gold": p["money"] // 10000 if p["money"] else 0,
-                "sold_at": p["deliver_time"],
-            }
-        )
-    return sales
+def _prometheus_query(query: str) -> float | None:
+    try:
+        url = f"{PROMETHEUS_URL}/api/v1/query?" + urllib.parse.urlencode({"query": query})
+        with urllib.request.urlopen(url, timeout=PROMETHEUS_TIMEOUT) as resp:
+            data = json.load(resp)
+        result = data["data"]["result"]
+        return float(result[0]["value"][1]) if result else None
+    except (OSError, KeyError, IndexError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def fetch_host_health() -> dict | None:
+    """Real host metrics from the standalone Prometheus + node-exporter
+    stack (monitoring/docker-compose.yml) — this container has no /proc or
+    /sys of its own, deliberately, so it never needs privileged access to
+    show CPU/RAM/temp. Independent of the game DB, so this can populate
+    even while the game stack is asleep. Returns None if that stack isn't
+    reachable rather than fabricating a value."""
+    cpu_percent = _prometheus_query('100 - avg(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100')
+    mem_total = _prometheus_query("node_memory_MemTotal_bytes")
+    mem_available = _prometheus_query("node_memory_MemAvailable_bytes")
+    cpu_temp_c = _prometheus_query('max(node_hwmon_temp_celsius{chip="platform_coretemp_0"})')
+
+    if cpu_percent is None and mem_total is None and cpu_temp_c is None:
+        return None
+
+    memory_percent = None
+    if mem_total and mem_available is not None:
+        memory_percent = round((1 - mem_available / mem_total) * 100, 1)
+
+    return {
+        "cpu_percent": round(cpu_percent, 1) if cpu_percent is not None else None,
+        "memory_percent": memory_percent,
+        "cpu_temp_c": round(cpu_temp_c, 1) if cpu_temp_c is not None else None,
+    }
 
 
 def query_live_stats() -> dict:
@@ -273,7 +294,7 @@ def query_live_stats() -> dict:
             )
             top_guilds = cur.fetchall()
 
-            recent_sales = fetch_recent_sales(cur)
+            top_crafters = fetch_top_crafters(cur)
 
         # Pop the raw bucket columns out of `totals` before spreading it
         # below, so they only ever appear nested under level_buckets.
@@ -291,8 +312,8 @@ def query_live_stats() -> dict:
             "faction": {"alliance": alliance, "horde": horde},
             "level_buckets": level_buckets,
             "top_guilds": top_guilds,
+            "top_crafters": top_crafters,
             "real_players": real_players,
-            "recent_sales": recent_sales,
         }
         return _decimals_to_int(result)
     finally:
@@ -330,15 +351,18 @@ def summarize_sessions() -> dict:
 
 def get_stats() -> dict:
     now = time.time()
-    # Independent of DB reachability — sessions.json is readable whether
-    # the realm's awake or asleep, so these show up either way.
+    # Both independent of the game DB — sessions.json and Prometheus are
+    # readable whether the realm's awake or asleep, so these show up either
+    # way, and never get frozen into last_stats.json's stale cache below.
     session_summary = summarize_sessions()
+    host_health = fetch_host_health()
     try:
         stats = query_live_stats()
         if not game_ports_reachable():
             log("DB is up but authserver/worldserver aren't accepting connections yet — not fully online")
             raise RuntimeError("game ports not reachable")
         stats.update(session_summary)
+        stats["host_health"] = host_health
         payload = {"status": "awake", "as_of": now, "stats": stats}
         write_cache(payload)
         return payload
@@ -346,8 +370,10 @@ def get_stats() -> dict:
         log(f"Realm not fully online (stack likely asleep or still booting): {exc}")
         cached = read_cache()
         if cached is None:
-            return {"status": "asleep", "as_of": now, "stats": None, **session_summary}
+            return {"status": "asleep", "as_of": now, "stats": None, "host_health": host_health, **session_summary}
         cached_stats = {**cached["stats"], **session_summary} if cached["stats"] else cached["stats"]
+        if cached_stats:
+            cached_stats["host_health"] = host_health
         return {"status": "asleep", "as_of": now, "stats": cached_stats, "stats_as_of": cached["as_of"]}
 
 
