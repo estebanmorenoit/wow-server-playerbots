@@ -275,6 +275,13 @@
   .bg-corner.bl { bottom: 10px; left: 10px; transform: scaleY(-1); }
   .bg-corner.br { bottom: 10px; right: 10px; transform: scale(-1, -1); }
   @media (max-width: 560px) { .bg-corner { width: 54px; height: 54px; } }
+
+  /* ---- huge, near-invisible faction crests bleeding off opposite
+     corners — abstract shapes, not the game's actual crest art, just
+     echoing Alliance-vs-Horde as a motif (same device as the dashboard). ---- */
+  .bg-crest { position: fixed; width: 46vw; height: 46vw; max-width: 620px; max-height: 620px; z-index: 0; pointer-events: none; fill: none; }
+  .bg-crest.alliance { top: -8%; left: -12%; stroke: var(--alliance); opacity: 0.07; }
+  .bg-crest.horde { bottom: -10%; right: -12%; stroke: var(--horde); opacity: 0.07; }
 </style>
 </head>
 <body>
@@ -306,6 +313,12 @@
       </svg>
     </div>
     <div class="bg-snow" id="bg-snow"></div>
+    <svg class="bg-crest alliance" viewBox="0 0 24 24" stroke-width="0.6">
+      <path d="M12 1l10 4.3v9C22 21.5 17.5 27 12 28.5 6.5 27 2 21.5 2 14.3v-9L12 1z"></path>
+    </svg>
+    <svg class="bg-crest horde" viewBox="0 0 24 24" stroke-width="0.6">
+      <path d="M12 1l10 3-1.4 9L12 28.5 3.4 13 2 4l10-3z"></path>
+    </svg>
   </div>
 
   <svg class="bg-corner tl" viewBox="0 0 100 100" fill="none" stroke="#d4af6a" stroke-width="1.4">
