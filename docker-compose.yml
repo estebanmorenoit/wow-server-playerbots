@@ -195,20 +195,27 @@ services:
       # Cosmetic: bots occasionally play emotes (wave, dance, sit, ...) on
       # their own, not just chat. No behavioral/performance impact.
       AC_AI_PLAYERBOT_RANDOM_BOT_EMOTE: "1"
-      # Bots actually queue for battlegrounds instead of merely being
-      # *able* to join one if invited — this is what's needed to ever see
-      # real data in pvpstats_battlegrounds (confirmed empty beforehand).
-      AC_AI_PLAYERBOT_RANDOM_BOT_AUTO_JOIN_BG: "1"
+      # Reverted 2026-09-16: correlated with a real, measured jump in CPU
+      # pressure stall (~23% baseline -> 38% sustained) and a visible rise in
+      # simultaneous bot combat (6->13->17 within 20 min, from worldserver's
+      # own periodic stats log) on this thermally-limited 2-core host, right
+      # after enabling this alongside EnableGuildTasks below. Game server
+      # binary was independently confirmed unchanged (same commit) across
+      # the same window, ruling that out as the cause. Bots actually queuing
+      # for battlegrounds (rather than just being *able* to join one if
+      # invited) is real extra map/combat simulation work, not free.
+      AC_AI_PLAYERBOT_RANDOM_BOT_AUTO_JOIN_BG: "0"
       # Bots prefer clustering near their own guild/group members instead
       # of being placed independently of who they're nominally with — makes
       # "who's standing near me" feel more socially coherent.
       AC_AI_PLAYERBOT_RANDOM_BOT_GUILD_NEARBY: "1"
       AC_AI_PLAYERBOT_RANDOM_BOT_GROUP_NEARBY: "1"
       # Guild "task board" system (bots complete tasks for guild rewards).
-      # Marked "Deprecated Settings (yet still in use)" in the module's own
-      # playerbots.conf.dist — enabled to try, but the first thing to
-      # suspect and revert if anything guild-related looks off after this.
-      AC_AI_PLAYERBOT_ENABLE_GUILD_TASKS: "1"
+      # Reverted 2026-09-16, alongside RandomBotAutoJoinBG above — see that
+      # comment. Already flagged as the first thing to suspect: also marked
+      # "Deprecated Settings (yet still in use)" in the module's own
+      # playerbots.conf.dist.
+      AC_AI_PLAYERBOT_ENABLE_GUILD_TASKS: "0"
       # DataDir defaults to "." which resolves against the image's WorkingDir
       # (/azerothcore), not against the client-data volume mounted below —
       # without this the world server fails "Failed to find map files for
