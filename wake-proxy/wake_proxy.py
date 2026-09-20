@@ -321,8 +321,166 @@ def fetch_economy_snapshot() -> dict | None:
         return None
 
 
+# Skill-line IDs for the profession panel — a small, fixed list that hasn't
+# changed since WotLK shipped, unlike achievement_dbc/areatable_dbc (see
+# status-page/status_page.py, which documents the same list): those need
+# real client DBC data this core never imported, but profession names are
+# common knowledge, not extracted data, so hardcoding them here carries none
+# of that risk. Mirrored here rather than imported since this container and
+# status-page are built from separate, independent images.
+PROFESSION_NAMES = {
+    164: "Blacksmithing", 165: "Leatherworking", 171: "Alchemy",
+    182: "Herbalism", 186: "Mining", 197: "Tailoring",
+    202: "Engineering", 333: "Enchanting", 393: "Skinning",
+    755: "Jewelcrafting", 773: "Inscription",
+    185: "Cooking", 129: "First Aid", 356: "Fishing",
+}
+
+
+def fetch_character_snapshot(guids: list[int] | None = None) -> dict[int, dict]:
+    """Per-character progress snapshot for the real player(s), keyed by
+    guid — used to compute what YOUR character actually did in a session
+    (level/gold/quests/xp/exploration), as opposed to
+    fetch_economy_snapshot()'s realm-wide AH numbers. With no guids given,
+    auto-detects whichever real (non-bot) characters are online right now —
+    used at session start. At session end the real player has already
+    logged out (online=0 is literally the signal that ended the session),
+    so the end snapshot instead re-queries the exact guids captured at
+    start, regardless of their online flag — the row's stats are still
+    their last-saved state either way."""
+    guid_filter = f"c.guid IN ({','.join(str(g) for g in guids)})" if guids else "c.online = 1"
+    result = subprocess.run(
+        [
+            "docker", "exec", "ac-database", "mysql", "-uroot", f"-p{DB_ROOT_PASSWORD}",
+            "-N", "-B", "acore_characters", "-e",
+            f"SELECT c.guid, c.name, c.level, c.money, c.xp, c.exploredZones, "
+            "(SELECT COUNT(*) FROM character_queststatus_rewarded WHERE guid = c.guid) "
+            "FROM characters c JOIN acore_auth.account a ON a.id = c.account "
+            f"WHERE a.username NOT LIKE 'RNDBOT%' AND {guid_filter};",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        log(f"[session] character snapshot query failed: {result.stderr.strip()}")
+        return {}
+    snapshot = {}
+    for line in result.stdout.strip().splitlines():
+        try:
+            guid_s, name, level, money, xp, explored, quests = line.split("\t")
+            snapshot[int(guid_s)] = {
+                "name": name, "level": int(level), "money": int(money), "xp": int(xp),
+                "explored": explored, "quests": int(quests),
+            }
+        except ValueError:
+            continue
+    return snapshot
+
+
+def _fetch_guid_keyed_counts(table: str, id_col: str, value_col: str,
+                              guids: list[int]) -> dict[int, dict[int, int]]:
+    """Shared helper for character_reputation and character_skills — both
+    are guid + id + value tables, just naming the id/value columns
+    differently (faction/standing vs skill/value)."""
+    if not guids:
+        return {}
+    result = subprocess.run(
+        [
+            "docker", "exec", "ac-database", "mysql", "-uroot", f"-p{DB_ROOT_PASSWORD}",
+            "-N", "-B", "acore_characters", "-e",
+            f"SELECT guid, {id_col}, {value_col} FROM {table} "
+            f"WHERE guid IN ({','.join(str(g) for g in guids)});",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        log(f"[session] {table} query failed: {result.stderr.strip()}")
+        return {}
+    by_guid: dict[int, dict[int, int]] = {}
+    for line in result.stdout.strip().splitlines():
+        try:
+            guid_s, id_s, value_s = line.split("\t")
+            by_guid.setdefault(int(guid_s), {})[int(id_s)] = int(value_s)
+        except ValueError:
+            continue
+    return by_guid
+
+
+def count_new_explored_bits(before: str, after: str) -> int:
+    """exploredZones is a space-separated array of uint32 bitmask chunks
+    (same encoding as taximask) — one bit per client-side explorable area.
+    Counting newly-set bits (present in `after`, not in `before`) needs no
+    DBC data since it's pure bit arithmetic, unlike naming which *area* each
+    bit represents (which would need AreaTable.dbc's exploration-bit
+    mapping — not attempted here, same reasoning as skipping faction/skill
+    names outside the known-safe PROFESSION_NAMES list)."""
+    try:
+        before_words = [int(w) for w in before.split()]
+        after_words = [int(w) for w in after.split()]
+    except (ValueError, AttributeError):
+        return 0
+    total = 0
+    for i in range(max(len(before_words), len(after_words))):
+        b = before_words[i] if i < len(before_words) else 0
+        a = after_words[i] if i < len(after_words) else 0
+        total += bin(a & ~b).count("1")
+    return total
+
+
+def fetch_achievement_counts(guids: list[int], start_time: float, end_time: float) -> dict[int, int]:
+    """Achievements earned per guid within [start_time, end_time] — uses
+    character_achievement's own `date` column directly rather than a
+    before/after delta, since it's timestamped (unlike quests/level/money,
+    which need the snapshot-diff approach above)."""
+    if not guids:
+        return {}
+    result = subprocess.run(
+        [
+            "docker", "exec", "ac-database", "mysql", "-uroot", f"-p{DB_ROOT_PASSWORD}",
+            "-N", "-B", "acore_characters", "-e",
+            "SELECT guid, COUNT(*) FROM character_achievement "
+            f"WHERE guid IN ({','.join(str(g) for g in guids)}) "
+            f"AND date BETWEEN {int(start_time)} AND {int(end_time)} "
+            "GROUP BY guid;",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        log(f"[session] achievement query failed: {result.stderr.strip()}")
+        return {}
+    counts = {}
+    for line in result.stdout.strip().splitlines():
+        try:
+            guid_s, count = line.split("\t")
+            counts[int(guid_s)] = int(count)
+        except ValueError:
+            continue
+    return counts
+
+
+def fetch_session_start_state() -> dict:
+    """Everything needed to diff against at session end, captured once at
+    session start — reputation/skills need their own start-of-session
+    snapshot the same way start_chars does, since record_session() only
+    runs once, at the end, and can't recover what they were at the start
+    otherwise."""
+    chars = fetch_character_snapshot()
+    guids = list(chars.keys())
+    return {
+        "chars": chars,
+        "reputation": _fetch_guid_keyed_counts("character_reputation", "faction", "standing", guids),
+        "skills": _fetch_guid_keyed_counts("character_skills", "skill", "value", guids),
+    }
+
+
 def record_session(start_time: float, end_time: float, peak_population: int,
-                    start_econ: dict | None, end_econ: dict | None) -> None:
+                    start_econ: dict | None, end_econ: dict | None,
+                    start_state: dict | None = None) -> None:
     session = {
         "started_at": start_time,
         "ended_at": end_time,
@@ -332,6 +490,53 @@ def record_session(start_time: float, end_time: float, peak_population: int,
     if start_econ and end_econ:
         session["ah_gold_delta"] = end_econ["ah_gold"] - start_econ["ah_gold"]
         session["ah_listings_delta"] = end_econ["ah_listings"] - start_econ["ah_listings"]
+
+    start_chars = start_state.get("chars") if start_state else None
+    if start_chars:
+        guids = list(start_chars.keys())
+        end_chars = fetch_character_snapshot(guids=guids)
+        achievements = fetch_achievement_counts(guids, start_time, end_time)
+        start_reputation = start_state["reputation"]
+        end_reputation = _fetch_guid_keyed_counts("character_reputation", "faction", "standing", guids)
+        start_skills = start_state["skills"]
+        end_skills = _fetch_guid_keyed_counts("character_skills", "skill", "value", guids)
+        characters = []
+        for guid, start in start_chars.items():
+            end = end_chars.get(guid, start)
+
+            xp_gained = None
+            if end["level"] == start["level"] and end["xp"] > start["xp"]:
+                xp_gained = end["xp"] - start["xp"]
+
+            start_rep = start_reputation.get(guid, {})
+            end_rep = end_reputation.get(guid, {})
+            reputations_gained = sum(1 for fid, val in end_rep.items() if val > start_rep.get(fid, 0))
+
+            start_sk = start_skills.get(guid, {})
+            end_sk = end_skills.get(guid, {})
+            skills_gained = [
+                {"name": name, "delta": end_sk.get(skill_id, 0) - start_sk.get(skill_id, 0)}
+                for skill_id, name in PROFESSION_NAMES.items()
+                if end_sk.get(skill_id, 0) > start_sk.get(skill_id, 0)
+            ]
+
+            characters.append({
+                "name": start["name"],
+                "level_start": start["level"],
+                "level_end": end["level"],
+                # Raw copper, not pre-rounded to gold — 1g = 100s = 10000c.
+                # A 50-silver session used to round to "+0g" and vanish
+                # entirely; the frontend formats this into g/s/c itself.
+                "money_delta": end["money"] - start["money"],
+                "quests_completed": max(0, end["quests"] - start["quests"]),
+                "achievements_earned": achievements.get(guid, 0),
+                "xp_gained": xp_gained,
+                "reputations_gained": reputations_gained,
+                "skills_gained": skills_gained,
+                "areas_explored": count_new_explored_bits(start["explored"], end.get("explored", start["explored"])),
+            })
+        if characters:
+            session["characters"] = characters
 
     try:
         sessions = []
@@ -393,6 +598,7 @@ def idle_watcher() -> None:
     idle_since: float | None = None
     session_start_time: float | None = None
     session_start_econ: dict | None = None
+    session_start_state: dict = {}
     peak_population = 0
     while True:
         time.sleep(IDLE_CHECK_INTERVAL)
@@ -403,6 +609,7 @@ def idle_watcher() -> None:
             idle_since = None
             session_start_time = None
             session_start_econ = None
+            session_start_state = {}
             peak_population = 0
             continue
 
@@ -424,15 +631,18 @@ def idle_watcher() -> None:
             if real_online > 0 and session_start_time is None:
                 session_start_time = time.time()
                 session_start_econ = fetch_economy_snapshot()
+                session_start_state = fetch_session_start_state()
                 peak_population = online
                 log(f"[session] started (population {online})")
             elif real_online > 0:
                 peak_population = max(peak_population, online)
             elif real_online == 0 and session_start_time is not None:
                 log("[session] real player logged out — recording session")
-                record_session(session_start_time, time.time(), peak_population, session_start_econ, fetch_economy_snapshot())
+                record_session(session_start_time, time.time(), peak_population, session_start_econ,
+                                fetch_economy_snapshot(), session_start_state)
                 session_start_time = None
                 session_start_econ = None
+                session_start_state = {}
                 peak_population = 0
 
         if online > 0:

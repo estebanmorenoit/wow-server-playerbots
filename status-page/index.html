@@ -417,18 +417,27 @@
   .session-list { display: flex; flex-direction: column; gap: 8px; }
   .session-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px 16px;
+    flex-direction: column;
+    gap: 6px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 12px 16px;
     font-size: 13px;
   }
-  .session-row .sdate { color: var(--text); font-family: "IBM Plex Mono", monospace; font-size: 12px; }
-  .session-row .sstats { display: flex; gap: 16px; color: var(--text-dim); font-size: 12px; }
+  .session-row .sdate {
+    color: var(--text);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  /* Each character's line wraps as normal text (not flex) - the bits
+     within a line are joined with " · " separators in the markup itself
+     rather than laid out as separate flex items, which is what caused
+     each fragment to land in its own spot instead of flowing together. */
+  .session-row .sstats { color: var(--text-dim); font-size: 13px; line-height: 1.7; }
+  .session-row .scharacter { color: var(--text); font-weight: 600; }
   .session-row .sstats b { color: var(--gold); font-family: "IBM Plex Mono", monospace; font-weight: 600; }
   .session-row .sdelta-pos { color: var(--online); }
   .session-row .sdelta-neg { color: var(--horde); }
@@ -768,6 +777,25 @@ function formatDelta(n, suffix = "") {
   return `<span class="${cls}">${sign}${n.toLocaleString()}${suffix}</span>`;
 }
 
+// 1 gold = 100 silver = 10000 copper. Rounding straight to gold (the old
+// behavior) made anything under 1g vanish entirely — a 50-silver session
+// showed as "+0g". This shows only the denominations that actually
+// changed, so small amounts stay visible instead of rounding to nothing.
+function formatMoneyDelta(copper) {
+  if (copper == null || copper === 0) return null;
+  const sign = copper > 0 ? "+" : "-";
+  const cls = copper > 0 ? "sdelta-pos" : "sdelta-neg";
+  const abs = Math.abs(copper);
+  const g = Math.floor(abs / 10000);
+  const s = Math.floor((abs % 10000) / 100);
+  const c = abs % 100;
+  const parts = [];
+  if (g) parts.push(`${g}g`);
+  if (s) parts.push(`${s}s`);
+  if (c || !parts.length) parts.push(`${c}c`);
+  return `<span class="${cls}">${sign}${parts.join(" ")}</span>`;
+}
+
 function renderSessionHistory(sessions) {
   const list = document.getElementById("session-list");
   if (!sessions || !sessions.length) {
@@ -780,15 +808,40 @@ function renderSessionHistory(sessions) {
     const date = new Date(s.started_at * 1000).toLocaleString(undefined, {
       month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
     });
-    const parts = [`<b>${formatDuration(s.duration_seconds)}</b>`, `peak <b>${s.peak_population}</b> online`];
-    const goldDelta = formatDelta(s.ah_gold_delta, "g");
-    if (goldDelta) parts.push(`AH ${goldDelta}`);
-    const listingsDelta = formatDelta(s.ah_listings_delta);
-    if (listingsDelta) parts.push(`listings ${listingsDelta}`);
+    // One line per character (own <div>, not joined into one flex row) so
+    // each stays readable instead of every fragment fighting for space in
+    // a single flex container - that's what caused the cramped layout.
+    let lines;
+    if (s.characters && s.characters.length) {
+      lines = s.characters.map(c => {
+        const bits = [c.level_end > c.level_start
+          ? `<span class="scharacter">${c.name}</span> lvl ${c.level_start}&rarr;${c.level_end}`
+          : `<span class="scharacter">${c.name}</span> lvl ${c.level_end}`];
+        // xp_gained is only set when no level-up happened this session —
+        // the raw xp counter resets on level-up, so a naive delta across
+        // one would be meaningless (or negative); the level line above
+        // already covers that case.
+        if (c.xp_gained) bits.push(`+${c.xp_gained.toLocaleString()} xp`);
+        if (c.quests_completed) bits.push(`${c.quests_completed} quest${c.quests_completed === 1 ? "" : "s"}`);
+        const moneyDelta = formatMoneyDelta(c.money_delta);
+        if (moneyDelta) bits.push(moneyDelta);
+        if (c.achievements_earned) bits.push(`${c.achievements_earned} achievement${c.achievements_earned === 1 ? "" : "s"}`);
+        if (c.reputations_gained) bits.push(`rep with ${c.reputations_gained} faction${c.reputations_gained === 1 ? "" : "s"}`);
+        if (c.skills_gained && c.skills_gained.length) {
+          bits.push(c.skills_gained.map(sk => `+${sk.delta} ${sk.name}`).join(", "));
+        }
+        if (c.areas_explored) bits.push(`${c.areas_explored} new area${c.areas_explored === 1 ? "" : "s"} explored`);
+        return `<div class="sstats">${bits.join(" &middot; ")}</div>`;
+      });
+    } else {
+      // Older session records predate character tracking — fall back to
+      // what they actually have rather than showing nothing.
+      lines = [`<div class="sstats">peak <b>${s.peak_population}</b> online</div>`];
+    }
     return `
       <div class="session-row">
-        <span class="sdate">${date}</span>
-        <span class="sstats">${parts.join(" &middot; ")}</span>
+        <span class="sdate">${date} &middot; ${formatDuration(s.duration_seconds)}</span>
+        ${lines.join("")}
       </div>`;
   }).join("");
 }
