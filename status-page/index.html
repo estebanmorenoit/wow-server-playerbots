@@ -604,6 +604,10 @@
       </div>
     </section>
 
+    <!-- Top Guilds and Top Crafters sections disabled by request -
+         renderGuilds()/renderCrafters() calls are commented out below
+         in render(data) to match; the functions themselves are left
+         intact in case this gets turned back on later.
     <section id="guild-section" hidden>
       <div class="section-title">Top Guilds</div>
       <div class="guild-list" id="guild-list"></div>
@@ -613,6 +617,7 @@
       <div class="section-title">Top Crafters</div>
       <div class="crafter-list" id="crafter-list"></div>
     </section>
+    -->
 
     <section>
       <div class="section-title">Host Health<span class="live-tag">LIVE — this machine, not the realm</span></div>
@@ -803,7 +808,7 @@ function renderSessionHistory(sessions) {
     return;
   }
   // Most recent first.
-  const ordered = [...sessions].reverse().slice(0, 15);
+  const ordered = [...sessions].reverse().slice(0, 10);
   list.innerHTML = ordered.map(s => {
     const date = new Date(s.started_at * 1000).toLocaleString(undefined, {
       month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -949,8 +954,8 @@ function render(data) {
   renderPlayers(stats.real_players);
   renderComposition(stats.faction || {}, stats.class_counts || {});
   renderLevelBuckets(stats.level_buckets || {});
-  renderGuilds(stats.top_guilds);
-  renderCrafters(stats.top_crafters);
+  // renderGuilds(stats.top_guilds) / renderCrafters(stats.top_crafters) -
+  // sections disabled by request, see the commented-out <section>s above.
   renderHostHealth(stats.host_health);
   renderRates(stats.xp_rate);
   if (stats.realm_founded) {
